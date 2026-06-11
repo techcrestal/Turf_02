@@ -20,11 +20,14 @@ jobs:
         with:
           version: latest
 
+      - name: Link project
+        run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
+
       - name: Push DB migrations
-        run: printf 'y\n' | supabase db push --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} --password ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: printf 'y\n' | supabase db push --password ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Deploy edge functions
-        run: supabase functions deploy --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} --no-verify-jwt
+        run: supabase functions deploy --no-verify-jwt
 
   # ── 2. Frontend: Build + Deploy to Hostinger via FTP ────────────────────────
   deploy-frontend:
