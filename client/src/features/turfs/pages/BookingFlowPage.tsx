@@ -1,0 +1,592 @@
+import { useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { turfsApi } from '../../../api/endpoints/turfs';
+import { sportsApi } from '../../../api/endpoints/sports';
+import { courtsApi, Court, TimeSlot } from '../../../api/endpoints/courts';
+import { bookingsApi } from '../../../api/endpoints/bookings';
+import { gamesApi } from '../../../api/endpoints/games';
+import { paymentsApi } from '../../../api/endpoints/payments';
+import { getSportEmoji, turfGradient } from '../../../utils/helpers';
+
+type GameType = 'private' | 'public' | null;
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function toISO(date: string, time: string): string {
+  return new Date(`${date}T${time}:00`).toISOString();
+}
+
+function getDuration(startTime: string, endTime: string): number {
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  return ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+}
+
+function getMatchingSlots(court: Court, date: string, startTime: string, endTime: string): TimeSlot[] {
+  const dayOfWeek = new Date(date).getDay();
+  return (court.court_time_slots ?? []).filter((s) => {
+    if (s.day_of_week !== dayOfWeek) return false;
+    return s.start_time.slice(0, 5) >= startTime || s.end_time.slice(0, 5) <= endTime;
+  });
+}
+
+export default function BookingFlowPage() {
+  const { turfId } = useParams<{ turfId: string }>();
+  const navigate = useNavigate();
+
+  const today = new Date().toISOString().slice(0, 10);
+  const [step, setStep] = useState(1);
+  const [date, setDate] = useState(today);
+  const [startTime, setStartTime] = useState('09:00');
+  const [endTime, setEndTime] = useState('10:00');
+  const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
+  const [gameType, setGameType] = useState<GameType>(null);
+  const [gameForm, setGameForm] = useState({
+    sport_id: '',
+    title: '',
+    description: '',
+    entry_fee: '0',
+    max_players: '10',
+  });
+  const [activePhoto, setActivePhoto] = useState(0);
+  const [success, setSuccess] = useState<{ bookingId: string } | null>(null);
+  const [error, setError] = useState('');
+
+  const { data: turf } = useQuery({
+    queryKey: ['turf', turfId],
+    queryFn: () => turfsApi.getTurfById(turfId!),
+    enabled: !!turfId,
+  });
+
+  const { data: courts = [] } = useQuery({
+    queryKey: ['courts', turfId],
+    queryFn: () => courtsApi.getCourts(turfId!),
+    enabled: !!turfId,
+  });
+
+  const { data: photos = [] } = useQuery({
+    queryKey: ['turf-photos', turfId],
+    queryFn: () => turfsApi.getTurfPhotos(turfId!),
+    enabled: !!turfId,
+  });
+
+  const { data: sports = [] } = useQuery({
+    queryKey: ['sports'],
+    queryFn: sportsApi.getSports,
+  });
+
+  const sport = sports.find((s) => s.id === turf?.sport_id);
+  const duration = getDuration(startTime, endTime);
+
+  // Price: use selected court's matching slot price, else turf base price × duration
+  const calcPrice = (): number => {
+    if (selectedCourt && date) {
+      const matching = getMatchingSlots(selectedCourt, date, startTime, endTime);
+      if (matching.length > 0) {
+        return matching.reduce((sum, s) => sum + Number(s.price_per_slot), 0);
+      }
+    }
+    return Math.max(0, duration) * (turf?.price_per_hour ?? 500);
+  };
+
+  const totalPrice = calcPrice();
+
+  const TOTAL_STEPS = 4; // date/time → court → game type → confirm (public game details embedded in step 3)
+
+  const confirmMutation = useMutation({
+    mutationFn: async () => {
+      if (!turfId) throw new Error('No turf selected');
+      if (duration <= 0) throw new Error('End time must be after start time');
+
+      const booking = await bookingsApi.createBooking({
+        turf_id: turfId,
+        court_id: selectedCourt?.id ?? undefined,
+        start_time: toISO(date, startTime),
+        end_time: toISO(date, endTime),
+        price: totalPrice,
+      });
+
+      if (gameType === 'public') {
+        await gamesApi.createGame({
+          turf_id: turfId,
+          sport_id: gameForm.sport_id || turf?.sport_id || sports[0]?.id,
+          title: gameForm.title || `Game at ${turf?.name}`,
+          description: gameForm.description || undefined,
+          type: 'public',
+          entry_fee: parseFloat(gameForm.entry_fee) || 0,
+          max_players: parseInt(gameForm.max_players) || 10,
+          start_time: toISO(date, startTime),
+          end_time: toISO(date, endTime),
+        });
+      } else if (gameType === 'private') {
+        await gamesApi.createGame({
+          turf_id: turfId,
+          sport_id: turf?.sport_id || sports[0]?.id,
+          title: `Private game at ${turf?.name}`,
+          type: 'private',
+          start_time: toISO(date, startTime),
+          end_time: toISO(date, endTime),
+        });
+      }
+
+      await paymentsApi.createPayment({
+        booking_id: booking.id,
+        amount: totalPrice,
+        currency: 'INR',
+        provider: 'mock',
+      });
+
+      return booking;
+    },
+    onSuccess: (booking) => setSuccess({ bookingId: booking.id }),
+    onError: (err: any) => {
+      setError(
+        err?.response?.data?.error?.message ??
+        err?.response?.data?.message ??
+        err?.message ??
+        'Booking failed. Try again.'
+      );
+    },
+  });
+
+  const goBack = () => {
+    setError('');
+    if (step === 1) navigate(-1);
+    else setStep((s) => s - 1);
+  };
+
+  // ── Success screen ───────────────────────────────────────────────────────────
+  if (success) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center px-6 text-center">
+        <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center text-5xl mb-5">✅</div>
+        <h2 className="text-2xl font-extrabold text-slate-800 mb-2">Booking Confirmed!</h2>
+        <p className="text-slate-500 text-sm mb-1">Your turf is booked successfully</p>
+        {selectedCourt && (
+          <p className="text-sm font-semibold text-emerald-600 mb-1">{selectedCourt.name}</p>
+        )}
+        <p className="text-xs text-slate-400 mb-6 font-mono">#{success.bookingId.slice(0, 8)}</p>
+        <button
+          onClick={() => navigate('/bookings')}
+          className="bg-emerald-500 text-white font-bold px-8 py-3 rounded-xl mb-3"
+        >
+          View My Bookings
+        </button>
+        <button onClick={() => navigate('/home')} className="text-slate-500 text-sm">
+          Back to Home
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-white">
+      {/* ── Header with Photo Gallery ─────────────────────────────── */}
+      <div className="relative bg-black">
+        {photos.length > 0 ? (
+          <>
+            {/* Main photo */}
+            <div className="relative h-52 overflow-hidden">
+              <img
+                src={photos[activePhoto]?.url}
+                alt={`${turf?.name} photo ${activePhoto + 1}`}
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/40" />
+              {/* Photo counter */}
+              <span className="absolute top-14 right-4 bg-black/50 text-white text-xs px-2 py-1 rounded-full">
+                {activePhoto + 1}/{photos.length}
+              </span>
+              {/* Prev button */}
+              {activePhoto > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setActivePhoto((p) => p - 1); }}
+                  className="absolute left-10 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/50 text-white rounded-full flex items-center justify-center text-lg backdrop-blur-sm"
+                >
+                  ‹
+                </button>
+              )}
+              {/* Next button */}
+              {activePhoto < photos.length - 1 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setActivePhoto((p) => p + 1); }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/50 text-white rounded-full flex items-center justify-center text-lg backdrop-blur-sm"
+                >
+                  ›
+                </button>
+              )}
+            </div>
+            {/* Thumbnail strip */}
+            {photos.length > 1 && (
+              <div className="flex gap-1.5 px-2 py-1.5 overflow-x-auto bg-black/90 no-scrollbar">
+                {photos.map((p, i) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setActivePhoto(i)}
+                    className={`flex-shrink-0 w-12 h-8 rounded overflow-hidden border-2 transition-all ${
+                      i === activePhoto ? 'border-emerald-400' : 'border-transparent opacity-50'
+                    }`}
+                  >
+                    <img src={p.url} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          /* Fallback gradient */
+          <div className={`h-52 bg-gradient-to-br ${turfGradient(sport?.name ?? '')} flex items-center justify-center`}>
+            <span className="text-6xl">{getSportEmoji(sport?.name ?? '')}</span>
+          </div>
+        )}
+
+        {/* Overlaid header text */}
+        <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 text-white">
+          <h1 className="text-xl font-extrabold drop-shadow">{turf?.name ?? 'Book Turf'}</h1>
+          <p className="text-white/70 text-xs mt-0.5">
+            Step {step} of {TOTAL_STEPS} —{' '}
+            {step === 1 ? 'Date & Time' : step === 2 ? 'Select Court' : step === 3 ? 'Game Type' : 'Confirm'}
+          </p>
+          <div className="flex gap-1 mt-2">
+            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+              <div key={i} className={`h-1 flex-1 rounded-full ${i < step ? 'bg-emerald-400' : 'bg-white/30'}`} />
+            ))}
+          </div>
+        </div>
+
+        {/* Back button */}
+        <button
+          onClick={goBack}
+          className="absolute top-12 left-4 w-8 h-8 bg-black/40 text-white rounded-full flex items-center justify-center text-sm backdrop-blur-sm"
+        >
+          ←
+        </button>
+      </div>
+
+      <div className="px-5 py-5 lg:max-w-xl lg:mx-auto">
+
+        {/* ── Step 1: Date & Time ─────────────────────────────────── */}
+        {step === 1 && (
+          <div className="space-y-5">
+            <h2 className="text-lg font-bold text-slate-800">Select Date & Time</h2>
+
+            <div>
+              <label className="text-sm font-medium text-slate-700 mb-1 block">Date</label>
+              <input
+                type="date"
+                min={today}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-slate-700 mb-1 block">Start Time</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700 mb-1 block">End Time</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+
+            {duration > 0 && (
+              <div className="bg-emerald-50 rounded-xl p-4 space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Duration</span>
+                  <span className="font-semibold text-slate-800">{duration} hr{duration !== 1 ? 's' : ''}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Base rate</span>
+                  <span className="font-semibold text-slate-800">₹{turf?.price_per_hour ?? '—'}/hr</span>
+                </div>
+              </div>
+            )}
+
+            {duration <= 0 && (
+              <p className="text-red-500 text-sm">End time must be after start time</p>
+            )}
+
+            <button
+              onClick={() => duration > 0 && setStep(2)}
+              disabled={duration <= 0}
+              className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+
+        {/* ── Step 2: Select Court ─────────────────────────────────── */}
+        {step === 2 && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-slate-800">Choose a Court</h2>
+            <p className="text-sm text-slate-500">
+              {new Date(date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}
+              {' · '}{startTime} – {endTime}
+            </p>
+
+            {courts.length === 0 && (
+              <div className="bg-slate-50 rounded-2xl p-8 text-center">
+                <p className="text-slate-400 text-sm">No courts available for this turf</p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {courts.map((court) => {
+                const dayOfWeek = new Date(date).getDay();
+                const slots = (court.court_time_slots ?? []).filter(
+                  (s) => s.day_of_week === dayOfWeek
+                );
+                const isSelected = selectedCourt?.id === court.id;
+                const minPrice = slots.length > 0
+                  ? Math.min(...slots.map((s) => Number(s.price_per_slot)))
+                  : null;
+
+                return (
+                  <button
+                    key={court.id}
+                    type="button"
+                    onClick={() => setSelectedCourt(court)}
+                    className={`w-full text-left border-2 rounded-2xl p-4 transition-all ${
+                      isSelected
+                        ? 'border-emerald-500 bg-emerald-50 shadow-sm'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-slate-800">{court.name}</p>
+                          {isSelected && (
+                            <span className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0">✓</span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">
+                            {court.size}
+                          </span>
+                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">
+                            {court.court_type}
+                          </span>
+                        </div>
+
+                        {/* Available slots for selected day */}
+                        {slots.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {slots.slice(0, 5).map((s) => (
+                              <span
+                                key={s.id ?? `${s.start_time}-${s.day_of_week}`}
+                                className="bg-white border border-slate-200 text-slate-600 text-xs px-2 py-0.5 rounded-full"
+                              >
+                                {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}
+                              </span>
+                            ))}
+                            {slots.length > 5 && (
+                              <span className="text-xs text-slate-400">+{slots.length - 5} more</span>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-400 mt-1.5">
+                            No slots for {DAYS[dayOfWeek]}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="text-right flex-shrink-0">
+                        {minPrice !== null ? (
+                          <>
+                            <p className="text-xs text-slate-400">from</p>
+                            <p className="text-base font-bold text-emerald-600">₹{minPrice}</p>
+                            <p className="text-xs text-slate-400">per slot</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-xs text-slate-400">base</p>
+                            <p className="text-base font-bold text-emerald-600">₹{turf?.price_per_hour}</p>
+                            <p className="text-xs text-slate-400">per hr</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => selectedCourt && setStep(3)}
+              disabled={!selectedCourt}
+              className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors"
+            >
+              {selectedCourt ? `Continue with ${selectedCourt.name} →` : 'Select a court to continue'}
+            </button>
+          </div>
+        )}
+
+        {/* ── Step 3: Game Type ────────────────────────────────────── */}
+        {step === 3 && (
+          <div className="space-y-5">
+            <h2 className="text-lg font-bold text-slate-800">What type of game?</h2>
+
+            <div
+              onClick={() => setGameType('private')}
+              className={`border-2 rounded-2xl p-5 cursor-pointer transition-colors ${
+                gameType === 'private' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white'
+              }`}
+            >
+              <div className="text-3xl mb-2">🔒</div>
+              <h3 className="font-bold text-slate-800 text-lg">Private Game</h3>
+              <p className="text-slate-500 text-sm">Only for you and invited friends</p>
+            </div>
+
+            <div
+              onClick={() => setGameType('public')}
+              className={`border-2 rounded-2xl p-5 cursor-pointer transition-colors ${
+                gameType === 'public' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white'
+              }`}
+            >
+              <div className="text-3xl mb-2">🌍</div>
+              <h3 className="font-bold text-slate-800 text-lg">Public Game</h3>
+              <p className="text-slate-500 text-sm">Anyone can join and pay entry fee</p>
+            </div>
+
+            {/* Inline public game details */}
+            {gameType === 'public' && (
+              <div className="bg-slate-50 rounded-2xl p-4 space-y-3 border border-emerald-100">
+                <p className="text-sm font-semibold text-slate-700">Game Details</p>
+                <div>
+                  <label className="text-xs text-slate-600 mb-1 block">Sport</label>
+                  <select
+                    value={gameForm.sport_id}
+                    onChange={(e) => setGameForm({ ...gameForm, sport_id: e.target.value })}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  >
+                    <option value="">Select sport</option>
+                    {sports.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 mb-1 block">Game Title</label>
+                  <input
+                    type="text"
+                    value={gameForm.title}
+                    onChange={(e) => setGameForm({ ...gameForm, title: e.target.value })}
+                    placeholder="Friday evening match"
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-600 mb-1 block">Entry Fee (₹)</label>
+                    <input
+                      type="number"
+                      value={gameForm.entry_fee}
+                      onChange={(e) => setGameForm({ ...gameForm, entry_fee: e.target.value })}
+                      min="0"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600 mb-1 block">Max Players</label>
+                    <input
+                      type="number"
+                      value={gameForm.max_players}
+                      onChange={(e) => setGameForm({ ...gameForm, max_players: e.target.value })}
+                      min="2"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => gameType && setStep(4)}
+              disabled={!gameType}
+              className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+
+        {/* ── Step 4: Confirm ──────────────────────────────────────── */}
+        {step === 4 && (
+          <div className="space-y-5">
+            <h2 className="text-lg font-bold text-slate-800">Confirm Booking</h2>
+
+            <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
+              <Row label="Turf" value={turf?.name ?? '—'} />
+              {selectedCourt && (
+                <Row label="Court" value={`${selectedCourt.name} · ${selectedCourt.size} · ${selectedCourt.court_type}`} />
+              )}
+              <Row
+                label="Date"
+                value={new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+              />
+              <Row label="Time" value={`${startTime} – ${endTime}`} />
+              <Row label="Duration" value={`${duration} hr${duration !== 1 ? 's' : ''}`} />
+              {gameType && (
+                <Row label="Game" value={gameType === 'public' ? '🌍 Public' : '🔒 Private'} />
+              )}
+              {gameType === 'public' && gameForm.title && (
+                <Row label="Title" value={gameForm.title} />
+              )}
+              {gameType === 'public' && parseFloat(gameForm.entry_fee) > 0 && (
+                <Row label="Entry Fee" value={`₹${gameForm.entry_fee}/person`} />
+              )}
+              <div className="border-t border-slate-200 pt-3 flex justify-between items-center">
+                <span className="font-bold text-slate-800">Total to Pay</span>
+                <span className="font-bold text-emerald-700 text-xl">₹{totalPrice}</span>
+              </div>
+            </div>
+
+            {error && (
+              <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+            )}
+
+            <button
+              onClick={() => confirmMutation.mutate()}
+              disabled={confirmMutation.isPending}
+              className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold py-4 rounded-2xl text-base transition-colors"
+            >
+              {confirmMutation.isPending ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Processing...
+                </span>
+              ) : (
+                '💳 Confirm & Pay ₹' + totalPrice
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <p className="text-sm text-slate-500 flex-shrink-0">{label}</p>
+      <p className="text-sm text-slate-800 font-medium text-right">{value}</p>
+    </div>
+  );
+}
