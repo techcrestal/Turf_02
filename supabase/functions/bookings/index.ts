@@ -27,6 +27,24 @@ Deno.serve(async (req) => {
       return ok(data ?? []);
     }
 
+    // GET /bookings/availability?turf_id=&start=&end=
+    if (method === 'GET' && sub === 'availability') {
+      const turfId = url.searchParams.get('turf_id');
+      const start = url.searchParams.get('start');
+      const end = url.searchParams.get('end');
+      if (!turfId || !start || !end) return err('turf_id, start, and end are required', 400);
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('start_time, end_time')
+        .eq('turf_id', turfId)
+        .is('deleted_at', null)
+        .neq('status', 'cancelled')
+        .gte('start_time', start)
+        .lte('start_time', end);
+      if (error) throw error;
+      return ok({ booked_slots: data ?? [] });
+    }
+
     // GET /bookings/turf/:turfId — owner view
     if (method === 'GET' && sub.startsWith('turf/')) {
       const turfId = sub.split('/')[1];
@@ -57,7 +75,7 @@ Deno.serve(async (req) => {
       if (!turf) return notFound('Turf not found');
       const { data, error } = await supabase
         .from('bookings')
-        .insert({ user_id: auth.user.id, turf_id, court_id: court_id ?? null, start_time, end_time, price, status: 'pending', payment_status: 'pending' })
+        .insert({ user_id: auth.user.id, turf_id, court_id: court_id ?? null, start_time, end_time, price, status: 'confirmed', payment_status: 'pending' })
         .select().single();
       if (error) throw error;
       return new Response(JSON.stringify(data), { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

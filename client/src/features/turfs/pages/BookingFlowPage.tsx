@@ -4,7 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { turfsApi } from '../../../api/endpoints/turfs';
 import { sportsApi } from '../../../api/endpoints/sports';
 import { courtsApi, Court, TimeSlot } from '../../../api/endpoints/courts';
-import { bookingsApi } from '../../../api/endpoints/bookings';
+import { bookingsApi, BookedSlot } from '../../../api/endpoints/bookings';
 import { gamesApi } from '../../../api/endpoints/games';
 import { paymentsApi } from '../../../api/endpoints/payments';
 import { getSportEmoji, turfGradient } from '../../../utils/helpers';
@@ -12,6 +12,11 @@ import { getSportEmoji, turfGradient } from '../../../utils/helpers';
 type GameType = 'private' | 'public' | null;
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const HOUR_SLOTS: string[] = Array.from({ length: 17 }, (_, i) =>
+  `${String(i + 6).padStart(2, '0')}:00`
+);
 
 function toISO(date: string, time: string): string {
   return new Date(`${date}T${time}:00`).toISOString();
@@ -31,6 +36,250 @@ function getMatchingSlots(court: Court, date: string, startTime: string, endTime
   });
 }
 
+function CalendarPicker({
+  value,
+  onChange,
+  minDate,
+}: {
+  value: string;
+  onChange: (d: string) => void;
+  minDate: string;
+}) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const min = new Date(minDate);
+  min.setHours(0, 0, 0, 0);
+
+  const [viewYear, setViewYear] = useState(() => today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => today.getMonth());
+
+  const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+  const cells: (number | null)[] = [
+    ...Array(firstDayOfMonth).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
+    else setViewMonth((m) => m - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear((y) => y + 1); }
+    else setViewMonth((m) => m + 1);
+  };
+
+  const canGoPrev = viewYear > today.getFullYear() || viewMonth > today.getMonth();
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <button
+          onClick={prevMonth}
+          disabled={!canGoPrev}
+          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 disabled:opacity-30 text-slate-600 font-bold text-lg"
+        >
+          ‹
+        </button>
+        <span className="font-bold text-slate-800 text-sm">
+          {MONTHS[viewMonth]} {viewYear}
+        </span>
+        <button
+          onClick={nextMonth}
+          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-600 font-bold text-lg"
+        >
+          ›
+        </button>
+      </div>
+
+      <div className="grid grid-cols-7 mb-1">
+        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+          <div key={d} className="text-center text-xs text-slate-400 font-semibold py-1">
+            {d}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e-${i}`} />;
+          const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const cellDate = new Date(viewYear, viewMonth, day);
+          const isPast = cellDate < min;
+          const isToday = cellDate.getTime() === today.getTime();
+          const isSelected = dateStr === value;
+
+          let cls = 'aspect-square flex items-center justify-center text-sm rounded-full transition-all font-medium ';
+          if (isPast) {
+            cls += 'text-slate-300 cursor-not-allowed';
+          } else if (isSelected) {
+            cls += 'bg-emerald-500 text-white shadow-md';
+          } else if (isToday) {
+            cls += 'ring-2 ring-emerald-400 text-emerald-700 hover:bg-emerald-50 cursor-pointer';
+          } else {
+            cls += 'bg-emerald-50 text-slate-700 hover:bg-emerald-100 cursor-pointer';
+          }
+
+          return (
+            <button
+              key={dateStr}
+              disabled={isPast}
+              onClick={() => !isPast && onChange(dateStr)}
+              className={cls}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-4 mt-3 pt-3 border-t border-slate-100">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-emerald-500" />
+          <span className="text-xs text-slate-500">Selected</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full ring-2 ring-emerald-400" />
+          <span className="text-xs text-slate-500">Today</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-emerald-50 border border-slate-200" />
+          <span className="text-xs text-slate-500">Available</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-slate-200" />
+          <span className="text-xs text-slate-500">Past</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SlotGrid({
+  date,
+  startTime,
+  endTime,
+  bookedSlots,
+  onStartChange,
+  onEndChange,
+}: {
+  date: string;
+  startTime: string;
+  endTime: string;
+  bookedSlots: BookedSlot[];
+  onStartChange: (t: string) => void;
+  onEndChange: (t: string) => void;
+}) {
+  const isSlotBooked = (slotHour: string): boolean => {
+    const slotStart = new Date(`${date}T${slotHour}:00`).getTime();
+    const slotEnd = slotStart + 60 * 60 * 1000;
+    return bookedSlots.some((b) => {
+      const bStart = new Date(b.start_time).getTime();
+      const bEnd = new Date(b.end_time).getTime();
+      return slotStart < bEnd && slotEnd > bStart;
+    });
+  };
+
+  const startHour = startTime ? parseInt(startTime) : -1;
+  const endHour = endTime ? parseInt(endTime) : -1;
+
+  const isInRange = (slotHour: string): boolean => {
+    if (!startTime || !endTime) return false;
+    const h = parseInt(slotHour);
+    return h >= startHour && h < endHour;
+  };
+
+  const handleClick = (slotHour: string) => {
+    if (isSlotBooked(slotHour)) return;
+    const h = parseInt(slotHour);
+
+    if (!startTime || (startTime && endTime)) {
+      onStartChange(slotHour);
+      onEndChange('');
+      return;
+    }
+
+    if (h <= startHour) {
+      onStartChange(slotHour);
+      onEndChange('');
+      return;
+    }
+
+    const allClear = HOUR_SLOTS
+      .filter((s) => parseInt(s) > startHour && parseInt(s) <= h)
+      .every((s) => !isSlotBooked(s));
+
+    if (allClear) {
+      onEndChange(`${String(h + 1).padStart(2, '0')}:00`);
+    }
+  };
+
+  const awaitingEnd = startTime && !endTime;
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm bg-emerald-500" />
+          <span className="text-xs text-slate-500">Selected</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm bg-red-100 border border-red-200" />
+          <span className="text-xs text-slate-500">Booked</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm bg-slate-100 border border-slate-200" />
+          <span className="text-xs text-slate-500">Available</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-2">
+        {HOUR_SLOTS.map((slot) => {
+          const booked = isSlotBooked(slot);
+          const inRange = isInRange(slot);
+          const isStart = slot === startTime && !endTime;
+
+          let cls = 'py-2.5 rounded-xl text-xs font-semibold transition-all flex flex-col items-center gap-0.5 ';
+          if (booked) {
+            cls += 'bg-red-50 text-red-400 cursor-not-allowed border border-red-100';
+          } else if (inRange) {
+            cls += 'bg-emerald-500 text-white shadow-sm border border-emerald-600';
+          } else if (isStart) {
+            cls += 'bg-emerald-400 text-white border border-emerald-500 ring-2 ring-emerald-300';
+          } else {
+            cls += 'bg-slate-50 text-slate-700 border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 cursor-pointer';
+          }
+
+          return (
+            <button key={slot} disabled={booked} onClick={() => handleClick(slot)} className={cls}>
+              {booked ? <span className="text-red-300">🔒</span> : null}
+              <span>{slot}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 h-8 flex items-center">
+        {awaitingEnd && (
+          <p className="text-xs text-emerald-600 font-medium animate-pulse">
+            ✓ Start: {startTime} — now tap your end slot
+          </p>
+        )}
+        {startTime && endTime && (
+          <p className="text-xs text-emerald-700 font-semibold">
+            ✓ {startTime} – {endTime} ({getDuration(startTime, endTime)} hr
+            {getDuration(startTime, endTime) !== 1 ? 's' : ''})
+          </p>
+        )}
+        {!startTime && (
+          <p className="text-xs text-slate-400">Tap a slot to set your start time</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function BookingFlowPage() {
   const { turfId } = useParams<{ turfId: string }>();
   const navigate = useNavigate();
@@ -38,8 +287,8 @@ export default function BookingFlowPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [step, setStep] = useState(1);
   const [date, setDate] = useState(today);
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('10:00');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
   const [gameType, setGameType] = useState<GameType>(null);
   const [gameForm, setGameForm] = useState({
@@ -76,12 +325,18 @@ export default function BookingFlowPage() {
     queryFn: sportsApi.getSports,
   });
 
-  const sport = sports.find((s) => s.id === turf?.sport_id);
-  const duration = getDuration(startTime, endTime);
+  const { data: bookedSlots = [], isFetching: slotsLoading } = useQuery({
+    queryKey: ['availability', turfId, date],
+    queryFn: () => bookingsApi.getAvailability(turfId!, date),
+    enabled: !!turfId && !!date,
+    staleTime: 30_000,
+  });
 
-  // Price: use selected court's matching slot price, else turf base price × duration
+  const sport = sports.find((s) => s.id === turf?.sport_id);
+  const duration = startTime && endTime ? getDuration(startTime, endTime) : 0;
+
   const calcPrice = (): number => {
-    if (selectedCourt && date) {
+    if (selectedCourt && date && startTime && endTime) {
       const matching = getMatchingSlots(selectedCourt, date, startTime, endTime);
       if (matching.length > 0) {
         return matching.reduce((sum, s) => sum + Number(s.price_per_slot), 0);
@@ -91,13 +346,12 @@ export default function BookingFlowPage() {
   };
 
   const totalPrice = calcPrice();
-
-  const TOTAL_STEPS = 4; // date/time → court → game type → confirm (public game details embedded in step 3)
+  const TOTAL_STEPS = 4;
 
   const confirmMutation = useMutation({
     mutationFn: async () => {
       if (!turfId) throw new Error('No turf selected');
-      if (duration <= 0) throw new Error('End time must be after start time');
+      if (duration <= 0) throw new Error('Invalid time selection');
 
       const booking = await bookingsApi.createBooking({
         turf_id: turfId,
@@ -143,9 +397,9 @@ export default function BookingFlowPage() {
     onError: (err: any) => {
       setError(
         err?.response?.data?.error?.message ??
-        err?.response?.data?.message ??
-        err?.message ??
-        'Booking failed. Try again.'
+          err?.response?.data?.message ??
+          err?.message ??
+          'Booking failed. Try again.'
       );
     },
   });
@@ -156,7 +410,12 @@ export default function BookingFlowPage() {
     else setStep((s) => s - 1);
   };
 
-  // ── Success screen ───────────────────────────────────────────────────────────
+  const handleDateChange = (d: string) => {
+    setDate(d);
+    setStartTime('');
+    setEndTime('');
+  };
+
   if (success) {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center px-6 text-center">
@@ -182,11 +441,9 @@ export default function BookingFlowPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* ── Header with Photo Gallery ─────────────────────────────── */}
       <div className="relative bg-black">
         {photos.length > 0 ? (
           <>
-            {/* Main photo */}
             <div className="relative h-52 overflow-hidden">
               <img
                 src={photos[activePhoto]?.url}
@@ -194,11 +451,9 @@ export default function BookingFlowPage() {
                 className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/40" />
-              {/* Photo counter */}
               <span className="absolute top-14 right-4 bg-black/50 text-white text-xs px-2 py-1 rounded-full">
                 {activePhoto + 1}/{photos.length}
               </span>
-              {/* Prev button */}
               {activePhoto > 0 && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setActivePhoto((p) => p - 1); }}
@@ -207,7 +462,6 @@ export default function BookingFlowPage() {
                   ‹
                 </button>
               )}
-              {/* Next button */}
               {activePhoto < photos.length - 1 && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setActivePhoto((p) => p + 1); }}
@@ -217,7 +471,6 @@ export default function BookingFlowPage() {
                 </button>
               )}
             </div>
-            {/* Thumbnail strip */}
             {photos.length > 1 && (
               <div className="flex gap-1.5 px-2 py-1.5 overflow-x-auto bg-black/90 no-scrollbar">
                 {photos.map((p, i) => (
@@ -235,13 +488,11 @@ export default function BookingFlowPage() {
             )}
           </>
         ) : (
-          /* Fallback gradient */
           <div className={`h-52 bg-gradient-to-br ${turfGradient(sport?.name ?? '')} flex items-center justify-center`}>
             <span className="text-6xl">{getSportEmoji(sport?.name ?? '')}</span>
           </div>
         )}
 
-        {/* Overlaid header text */}
         <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 text-white">
           <h1 className="text-xl font-extrabold drop-shadow">{turf?.name ?? 'Book Turf'}</h1>
           <p className="text-white/70 text-xs mt-0.5">
@@ -255,7 +506,6 @@ export default function BookingFlowPage() {
           </div>
         </div>
 
-        {/* Back button */}
         <button
           onClick={goBack}
           className="absolute top-12 left-4 w-8 h-8 bg-black/40 text-white rounded-full flex items-center justify-center text-sm backdrop-blur-sm"
@@ -266,48 +516,47 @@ export default function BookingFlowPage() {
 
       <div className="px-5 py-5 lg:max-w-xl lg:mx-auto">
 
-        {/* ── Step 1: Date & Time ─────────────────────────────────── */}
         {step === 1 && (
           <div className="space-y-5">
             <h2 className="text-lg font-bold text-slate-800">Select Date & Time</h2>
 
-            <div>
-              <label className="text-sm font-medium text-slate-700 mb-1 block">Date</label>
-              <input
-                type="date"
-                min={today}
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
+            <CalendarPicker value={date} onChange={handleDateChange} minDate={today} />
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium text-slate-700 mb-1 block">Start Time</label>
-                <input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                />
+            {date && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  {new Date(date).toLocaleDateString('en-IN', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </span>
+                {slotsLoading && (
+                  <span className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                )}
               </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700 mb-1 block">End Time</label>
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
+            )}
+
+            <div>
+              <p className="text-sm font-semibold text-slate-700 mb-2">Pick your time slot</p>
+              <SlotGrid
+                date={date}
+                startTime={startTime}
+                endTime={endTime}
+                bookedSlots={bookedSlots}
+                onStartChange={setStartTime}
+                onEndChange={setEndTime}
+              />
             </div>
 
             {duration > 0 && (
               <div className="bg-emerald-50 rounded-xl p-4 space-y-1">
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-600">Duration</span>
-                  <span className="font-semibold text-slate-800">{duration} hr{duration !== 1 ? 's' : ''}</span>
+                  <span className="font-semibold text-slate-800">
+                    {duration} hr{duration !== 1 ? 's' : ''}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-600">Base rate</span>
@@ -316,21 +565,16 @@ export default function BookingFlowPage() {
               </div>
             )}
 
-            {duration <= 0 && (
-              <p className="text-red-500 text-sm">End time must be after start time</p>
-            )}
-
             <button
               onClick={() => duration > 0 && setStep(2)}
               disabled={duration <= 0}
               className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors"
             >
-              Next →
+              {duration > 0 ? `Next → (${startTime} – ${endTime})` : 'Select start and end time to continue'}
             </button>
           </div>
         )}
 
-        {/* ── Step 2: Select Court ─────────────────────────────────── */}
         {step === 2 && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-slate-800">Choose a Court</h2>
@@ -348,13 +592,9 @@ export default function BookingFlowPage() {
             <div className="space-y-3">
               {courts.map((court) => {
                 const dayOfWeek = new Date(date).getDay();
-                const slots = (court.court_time_slots ?? []).filter(
-                  (s) => s.day_of_week === dayOfWeek
-                );
+                const slots = (court.court_time_slots ?? []).filter((s) => s.day_of_week === dayOfWeek);
                 const isSelected = selectedCourt?.id === court.id;
-                const minPrice = slots.length > 0
-                  ? Math.min(...slots.map((s) => Number(s.price_per_slot)))
-                  : null;
+                const minPrice = slots.length > 0 ? Math.min(...slots.map((s) => Number(s.price_per_slot))) : null;
 
                 return (
                   <button
@@ -362,9 +602,7 @@ export default function BookingFlowPage() {
                     type="button"
                     onClick={() => setSelectedCourt(court)}
                     className={`w-full text-left border-2 rounded-2xl p-4 transition-all ${
-                      isSelected
-                        ? 'border-emerald-500 bg-emerald-50 shadow-sm'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
+                      isSelected ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -376,36 +614,22 @@ export default function BookingFlowPage() {
                           )}
                         </div>
                         <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">
-                            {court.size}
-                          </span>
-                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">
-                            {court.court_type}
-                          </span>
+                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{court.size}</span>
+                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{court.court_type}</span>
                         </div>
-
-                        {/* Available slots for selected day */}
                         {slots.length > 0 ? (
                           <div className="mt-2 flex flex-wrap gap-1.5">
                             {slots.slice(0, 5).map((s) => (
-                              <span
-                                key={s.id ?? `${s.start_time}-${s.day_of_week}`}
-                                className="bg-white border border-slate-200 text-slate-600 text-xs px-2 py-0.5 rounded-full"
-                              >
+                              <span key={s.id ?? `${s.start_time}-${s.day_of_week}`} className="bg-white border border-slate-200 text-slate-600 text-xs px-2 py-0.5 rounded-full">
                                 {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}
                               </span>
                             ))}
-                            {slots.length > 5 && (
-                              <span className="text-xs text-slate-400">+{slots.length - 5} more</span>
-                            )}
+                            {slots.length > 5 && <span className="text-xs text-slate-400">+{slots.length - 5} more</span>}
                           </div>
                         ) : (
-                          <p className="text-xs text-slate-400 mt-1.5">
-                            No slots for {DAYS[dayOfWeek]}
-                          </p>
+                          <p className="text-xs text-slate-400 mt-1.5">No slots for {DAYS[dayOfWeek]}</p>
                         )}
                       </div>
-
                       <div className="text-right flex-shrink-0">
                         {minPrice !== null ? (
                           <>
@@ -437,7 +661,6 @@ export default function BookingFlowPage() {
           </div>
         )}
 
-        {/* ── Step 3: Game Type ────────────────────────────────────── */}
         {step === 3 && (
           <div className="space-y-5">
             <h2 className="text-lg font-bold text-slate-800">What type of game?</h2>
@@ -464,7 +687,6 @@ export default function BookingFlowPage() {
               <p className="text-slate-500 text-sm">Anyone can join and pay entry fee</p>
             </div>
 
-            {/* Inline public game details */}
             {gameType === 'public' && (
               <div className="bg-slate-50 rounded-2xl p-4 space-y-3 border border-emerald-100">
                 <p className="text-sm font-semibold text-slate-700">Game Details</p>
@@ -476,9 +698,7 @@ export default function BookingFlowPage() {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
                   >
                     <option value="">Select sport</option>
-                    {sports.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
+                    {sports.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -494,23 +714,11 @@ export default function BookingFlowPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-slate-600 mb-1 block">Entry Fee (₹)</label>
-                    <input
-                      type="number"
-                      value={gameForm.entry_fee}
-                      onChange={(e) => setGameForm({ ...gameForm, entry_fee: e.target.value })}
-                      min="0"
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                    />
+                    <input type="number" value={gameForm.entry_fee} onChange={(e) => setGameForm({ ...gameForm, entry_fee: e.target.value })} min="0" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white" />
                   </div>
                   <div>
                     <label className="text-xs text-slate-600 mb-1 block">Max Players</label>
-                    <input
-                      type="number"
-                      value={gameForm.max_players}
-                      onChange={(e) => setGameForm({ ...gameForm, max_players: e.target.value })}
-                      min="2"
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                    />
+                    <input type="number" value={gameForm.max_players} onChange={(e) => setGameForm({ ...gameForm, max_players: e.target.value })} min="2" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white" />
                   </div>
                 </div>
               </div>
@@ -526,7 +734,6 @@ export default function BookingFlowPage() {
           </div>
         )}
 
-        {/* ── Step 4: Confirm ──────────────────────────────────────── */}
         {step === 4 && (
           <div className="space-y-5">
             <h2 className="text-lg font-bold text-slate-800">Confirm Booking</h2>
@@ -542,12 +749,8 @@ export default function BookingFlowPage() {
               />
               <Row label="Time" value={`${startTime} – ${endTime}`} />
               <Row label="Duration" value={`${duration} hr${duration !== 1 ? 's' : ''}`} />
-              {gameType && (
-                <Row label="Game" value={gameType === 'public' ? '🌍 Public' : '🔒 Private'} />
-              )}
-              {gameType === 'public' && gameForm.title && (
-                <Row label="Title" value={gameForm.title} />
-              )}
+              {gameType && <Row label="Game" value={gameType === 'public' ? '🌍 Public' : '🔒 Private'} />}
+              {gameType === 'public' && gameForm.title && <Row label="Title" value={gameForm.title} />}
               {gameType === 'public' && parseFloat(gameForm.entry_fee) > 0 && (
                 <Row label="Entry Fee" value={`₹${gameForm.entry_fee}/person`} />
               )}
