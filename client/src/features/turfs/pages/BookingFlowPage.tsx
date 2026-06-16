@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { turfsApi } from '../../../api/endpoints/turfs';
@@ -36,22 +36,56 @@ function getMatchingSlots(court: Court, date: string, startTime: string, endTime
   });
 }
 
+type DayStatus = 'available' | 'partial' | 'full';
+
+function computeDayStatus(dateStr: string, bookedSlots: BookedSlot[]): DayStatus {
+  const dayStart = new Date(`${dateStr}T00:00:00`).getTime();
+  const dayEnd = new Date(`${dateStr}T23:59:59`).getTime();
+
+  const dayBookings = bookedSlots.filter(b => {
+    const bStart = new Date(b.start_time).getTime();
+    return bStart >= dayStart && bStart <= dayEnd;
+  });
+
+  if (dayBookings.length === 0) return 'available';
+
+  const bookedHours = HOUR_SLOTS.filter(slot => {
+    const slotStart = new Date(`${dateStr}T${slot}:00`).getTime();
+    const slotEnd = slotStart + 60 * 60 * 1000;
+    return dayBookings.some(b => {
+      const bStart = new Date(b.start_time).getTime();
+      const bEnd = new Date(b.end_time).getTime();
+      return slotStart < bEnd && slotEnd > bStart;
+    });
+  }).length;
+
+  if (bookedHours >= Math.ceil(HOUR_SLOTS.length * 0.7)) return 'full';
+  return 'partial';
+}
+
 function CalendarPicker({
   value,
   onChange,
   minDate,
+  bookedSlots,
+  viewYear,
+  viewMonth,
+  onMonthChange,
+  isLoading,
 }: {
   value: string;
   onChange: (d: string) => void;
   minDate: string;
+  bookedSlots: BookedSlot[];
+  viewYear: number;
+  viewMonth: number;
+  onMonthChange: (year: number, month: number) => void;
+  isLoading?: boolean;
 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const min = new Date(minDate);
   min.setHours(0, 0, 0, 0);
-
-  const [viewYear, setViewYear] = useState(() => today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(() => today.getMonth());
 
   const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -62,12 +96,15 @@ function CalendarPicker({
   ];
 
   const prevMonth = () => {
-    if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
-    else setViewMonth((m) => m - 1);
+    const newMonth = viewMonth === 0 ? 11 : viewMonth - 1;
+    const newYear = viewMonth === 0 ? viewYear - 1 : viewYear;
+    onMonthChange(newYear, newMonth);
   };
+
   const nextMonth = () => {
-    if (viewMonth === 11) { setViewMonth(0); setViewYear((y) => y + 1); }
-    else setViewMonth((m) => m + 1);
+    const newMonth = viewMonth === 11 ? 0 : viewMonth + 1;
+    const newYear = viewMonth === 11 ? viewYear + 1 : viewYear;
+    onMonthChange(newYear, newMonth);
   };
 
   const canGoPrev = viewYear > today.getFullYear() || viewMonth > today.getMonth();
@@ -82,9 +119,14 @@ function CalendarPicker({
         >
           ‹
         </button>
-        <span className="font-bold text-slate-800 text-sm">
-          {MONTHS[viewMonth]} {viewYear}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-slate-800 text-sm">
+            {MONTHS[viewMonth]} {viewYear}
+          </span>
+          {isLoading && (
+            <span className="w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin inline-block" />
+          )}
+        </div>
         <button
           onClick={nextMonth}
           className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-600 font-bold text-lg"
@@ -109,17 +151,23 @@ function CalendarPicker({
           const isPast = cellDate < min;
           const isToday = cellDate.getTime() === today.getTime();
           const isSelected = dateStr === value;
+          const status: DayStatus = isPast ? 'available' : computeDayStatus(dateStr, bookedSlots);
 
           let cls = 'aspect-square flex items-center justify-center text-sm rounded-full transition-all font-medium ';
-          if (isPast) {
-            cls += 'text-slate-300 cursor-not-allowed';
-          } else if (isSelected) {
+
+          if (isSelected) {
             cls += 'bg-emerald-500 text-white shadow-md';
-          } else if (isToday) {
-            cls += 'ring-2 ring-emerald-400 text-emerald-700 hover:bg-emerald-50 cursor-pointer';
+          } else if (isPast) {
+            cls += 'text-slate-300 cursor-not-allowed';
+          } else if (status === 'full') {
+            cls += 'bg-red-50 text-red-500 border border-red-200 hover:bg-red-100 cursor-pointer';
+          } else if (status === 'partial') {
+            cls += 'bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 cursor-pointer';
           } else {
-            cls += 'bg-emerald-50 text-slate-700 hover:bg-emerald-100 cursor-pointer';
+            cls += 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 cursor-pointer';
           }
+
+          if (isToday && !isSelected) cls += ' ring-2 ring-emerald-400';
 
           return (
             <button
@@ -134,22 +182,22 @@ function CalendarPicker({
         })}
       </div>
 
-      <div className="flex items-center gap-4 mt-3 pt-3 border-t border-slate-100">
+      <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-slate-100">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-green-100 border border-green-200" />
+          <span className="text-xs text-slate-500">Open</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-amber-100 border border-amber-200" />
+          <span className="text-xs text-slate-500">Limited</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-red-100 border border-red-200" />
+          <span className="text-xs text-slate-500">Almost full</span>
+        </div>
         <div className="flex items-center gap-1.5">
           <div className="w-3 h-3 rounded-full bg-emerald-500" />
           <span className="text-xs text-slate-500">Selected</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded-full ring-2 ring-emerald-400" />
-          <span className="text-xs text-slate-500">Today</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded-full bg-emerald-50 border border-slate-200" />
-          <span className="text-xs text-slate-500">Available</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded-full bg-slate-200" />
-          <span className="text-xs text-slate-500">Past</span>
         </div>
       </div>
     </div>
@@ -302,6 +350,10 @@ export default function BookingFlowPage() {
   const [success, setSuccess] = useState<{ bookingId: string } | null>(null);
   const [error, setError] = useState('');
 
+  const nowDate = new Date();
+  const [calYear, setCalYear] = useState(() => nowDate.getFullYear());
+  const [calMonth, setCalMonth] = useState(() => nowDate.getMonth());
+
   const { data: turf } = useQuery({
     queryKey: ['turf', turfId],
     queryFn: () => turfsApi.getTurfById(turfId!),
@@ -325,12 +377,25 @@ export default function BookingFlowPage() {
     queryFn: sportsApi.getSports,
   });
 
-  const { data: bookedSlots = [], isFetching: slotsLoading } = useQuery({
-    queryKey: ['availability', turfId, date],
-    queryFn: () => bookingsApi.getAvailability(turfId!, date),
-    enabled: !!turfId && !!date,
-    staleTime: 30_000,
+  const { data: monthBookedSlots = [], isFetching: monthSlotsLoading } = useQuery({
+    queryKey: ['availability', turfId, calYear, calMonth],
+    queryFn: () => {
+      const start = new Date(calYear, calMonth, 1).toISOString();
+      const end = new Date(calYear, calMonth + 1, 0, 23, 59, 59).toISOString();
+      return bookingsApi.getAvailability(turfId!, start, end);
+    },
+    enabled: !!turfId,
+    staleTime: 60_000,
   });
+
+  const dayBookedSlots = useMemo(() => {
+    const dayStart = new Date(`${date}T00:00:00`).getTime();
+    const dayEnd = new Date(`${date}T23:59:59`).getTime();
+    return monthBookedSlots.filter(b => {
+      const bStart = new Date(b.start_time).getTime();
+      return bStart >= dayStart && bStart <= dayEnd;
+    });
+  }, [monthBookedSlots, date]);
 
   const sport = sports.find((s) => s.id === turf?.sport_id);
   const duration = startTime && endTime ? getDuration(startTime, endTime) : 0;
@@ -414,6 +479,11 @@ export default function BookingFlowPage() {
     setDate(d);
     setStartTime('');
     setEndTime('');
+  };
+
+  const handleMonthChange = (year: number, month: number) => {
+    setCalYear(year);
+    setCalMonth(month);
   };
 
   if (success) {
@@ -520,21 +590,27 @@ export default function BookingFlowPage() {
           <div className="space-y-5">
             <h2 className="text-lg font-bold text-slate-800">Select Date & Time</h2>
 
-            <CalendarPicker value={date} onChange={handleDateChange} minDate={today} />
+            <CalendarPicker
+              value={date}
+              onChange={handleDateChange}
+              minDate={today}
+              bookedSlots={monthBookedSlots}
+              viewYear={calYear}
+              viewMonth={calMonth}
+              onMonthChange={handleMonthChange}
+              isLoading={monthSlotsLoading}
+            />
 
             {date && (
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-slate-700">
-                  {new Date(date).toLocaleDateString('en-IN', {
+                  {new Date(date + 'T12:00:00').toLocaleDateString('en-IN', {
                     weekday: 'long',
                     day: 'numeric',
                     month: 'long',
                     year: 'numeric',
                   })}
                 </span>
-                {slotsLoading && (
-                  <span className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                )}
               </div>
             )}
 
@@ -544,7 +620,7 @@ export default function BookingFlowPage() {
                 date={date}
                 startTime={startTime}
                 endTime={endTime}
-                bookedSlots={bookedSlots}
+                bookedSlots={dayBookedSlots}
                 onStartChange={setStartTime}
                 onEndChange={setEndTime}
               />
@@ -579,7 +655,7 @@ export default function BookingFlowPage() {
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-slate-800">Choose a Court</h2>
             <p className="text-sm text-slate-500">
-              {new Date(date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}
+              {new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}
               {' · '}{startTime} – {endTime}
             </p>
 
@@ -591,7 +667,7 @@ export default function BookingFlowPage() {
 
             <div className="space-y-3">
               {courts.map((court) => {
-                const dayOfWeek = new Date(date).getDay();
+                const dayOfWeek = new Date(date + 'T12:00:00').getDay();
                 const slots = (court.court_time_slots ?? []).filter((s) => s.day_of_week === dayOfWeek);
                 const isSelected = selectedCourt?.id === court.id;
                 const minPrice = slots.length > 0 ? Math.min(...slots.map((s) => Number(s.price_per_slot))) : null;
@@ -745,7 +821,7 @@ export default function BookingFlowPage() {
               )}
               <Row
                 label="Date"
-                value={new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                value={new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               />
               <Row label="Time" value={`${startTime} – ${endTime}`} />
               <Row label="Duration" value={`${duration} hr${duration !== 1 ? 's' : ''}`} />
