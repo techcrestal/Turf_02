@@ -94,7 +94,7 @@ export default function OwnerDashboardPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-slate-800 truncate">{turf.name}</p>
-                    <p className="text-xs text-slate-500 truncate">{turf.city ?? '—'} · ₹{turf.price_per_hour}/hr</p>
+                    <p className="text-xs text-slate-500 truncate">{turf.city ?? '—'}{turf.starting_from_price != null ? ` · From ₹${turf.starting_from_price}/slot` : ''}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                     <span className={`w-2.5 h-2.5 rounded-full ${turf.is_active ? 'bg-emerald-500' : 'bg-slate-300'}`} />

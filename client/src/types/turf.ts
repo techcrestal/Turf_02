@@ -5,7 +5,7 @@ export interface Turf {
   address: string;
   city: string;
   sport_id: string;
-  price_per_hour: number;
+  starting_from_price: number | null;
   capacity: number;
   is_public: boolean;
   status: string;

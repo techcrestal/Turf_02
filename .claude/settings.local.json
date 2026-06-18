@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(npx tsc *)",
-      "Bash(cat /Users/pravar/Desktop/Turf_02/.env 2>/dev/null || find ~/Desktop ~/Documents -name \".env\" -maxdepth 4 2>/dev/null | head -10)"
-    ]
-  }
-}

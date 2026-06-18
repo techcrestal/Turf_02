@@ -150,8 +150,10 @@ export default function TurfDetailPage() {
 
         <div className="grid grid-cols-3 gap-3 mt-4">
           <div className="bg-emerald-50 rounded-xl p-3 text-center">
-            <p className="text-xs text-slate-500 mb-0.5">Price/hr</p>
-            <p className="text-base font-bold text-emerald-700">₹{turf.price_per_hour}</p>
+            <p className="text-xs text-slate-500 mb-0.5">Starting from</p>
+            <p className="text-base font-bold text-emerald-700">
+              {turf.starting_from_price != null ? `₹${turf.starting_from_price}` : '—'}
+            </p>
           </div>
           <div className="bg-slate-50 rounded-xl p-3 text-center">
             <p className="text-xs text-slate-500 mb-0.5">Capacity</p>

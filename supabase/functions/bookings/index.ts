@@ -27,22 +27,75 @@ Deno.serve(async (req) => {
       return ok(data ?? []);
     }
 
-    // GET /bookings/availability?turf_id=&start=&end=
+    // GET /bookings/availability?turf_id=&court_id=&start=&end=
     if (method === 'GET' && sub === 'availability') {
       const turfId = url.searchParams.get('turf_id');
+      const courtId = url.searchParams.get('court_id');
       const start = url.searchParams.get('start');
       const end = url.searchParams.get('end');
-      if (!turfId || !start || !end) return err('turf_id, start, and end are required', 400);
-      const { data, error } = await supabase
+      if (!start || !end) return err('start and end are required', 400);
+      if (!turfId && !courtId) return err('turf_id or court_id is required', 400);
+
+      let query = supabase
         .from('bookings')
         .select('start_time, end_time')
-        .eq('turf_id', turfId)
         .is('deleted_at', null)
         .neq('status', 'cancelled')
         .gte('start_time', start)
         .lte('start_time', end);
+      if (courtId) {
+        query = query.eq('court_id', courtId);
+      } else {
+        query = query.eq('turf_id', turfId!);
+      }
+      const { data, error } = await query;
       if (error) throw error;
-      return ok({ booked_slots: data ?? [] });
+
+      const bookedSlots = data ?? [];
+
+      // Group bookings by their UTC date string (YYYY-MM-DD).
+      // For IST (+5:30) with slots 06:00–22:00, the UTC date always matches
+      // the local date, so slicing the ISO timestamp is correct.
+      const slotsByDate = new Map<string, { start_time: string; end_time: string }[]>();
+      for (const slot of bookedSlots) {
+        const dateStr = slot.start_time.slice(0, 10);
+        if (!slotsByDate.has(dateStr)) slotsByDate.set(dateStr, []);
+        slotsByDate.get(dateStr)!.push(slot);
+      }
+
+      // Determine the display month from the `end` param (more reliable than
+      // `start` when the client sends local-midnight which can be UTC prev-day).
+      const endDate = new Date(end);
+      const displayYear = endDate.getUTCFullYear();
+      const displayMonth = endDate.getUTCMonth();
+      const daysInMonth = new Date(Date.UTC(displayYear, displayMonth + 1, 0)).getUTCDate();
+
+      // 17 available hour-slots per day (06:00–22:00).
+      // 100% booked (17 hrs) → 'full'; ≥70% (≥11.9 hrs) → 'limited'; else → 'available'.
+      const TOTAL_HOURS = 17;
+      const LIMITED_THRESHOLD = TOTAL_HOURS * 0.7; // 11.9 hrs
+
+      const dayStatuses: { date: string; status: string }[] = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${displayYear}-${String(displayMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const daySlots = slotsByDate.get(dateStr) ?? [];
+
+        let status = 'available';
+        if (daySlots.length > 0) {
+          const bookedHours = daySlots.reduce((sum, b) => {
+            return sum + (new Date(b.end_time).getTime() - new Date(b.start_time).getTime());
+          }, 0) / 3_600_000;
+          if (bookedHours >= TOTAL_HOURS) {
+            status = 'full';
+          } else if (bookedHours >= LIMITED_THRESHOLD) {
+            status = 'limited';
+          }
+        }
+
+        dayStatuses.push({ date: dateStr, status });
+      }
+
+      return ok({ booked_slots: bookedSlots, day_statuses: dayStatuses });
     }
 
     // GET /bookings/turf/:turfId — owner view

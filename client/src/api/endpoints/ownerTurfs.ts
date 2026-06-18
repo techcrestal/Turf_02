@@ -12,7 +12,6 @@ export interface TurfPayload {
   turf_email?: string;
   opening_time?: string;
   closing_time?: string;
-  price_per_hour: number;
   capacity: number;
   is_public?: boolean;
 }
@@ -30,7 +29,7 @@ export interface OwnerTurf {
   turf_email?: string;
   opening_time?: string;
   closing_time?: string;
-  price_per_hour: number;
+  starting_from_price: number | null;
   capacity: number;
   is_public: boolean;
   is_active: boolean;

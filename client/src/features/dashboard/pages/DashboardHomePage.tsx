@@ -21,7 +21,9 @@ function TurfCard({ turf, sport, onBook }: { turf: Turf; sport?: Sport; onBook: 
         <h3 className="font-semibold text-slate-800 text-sm truncate">{turf.name}</h3>
         <p className="text-slate-400 text-xs truncate">{turf.city}</p>
         <div className="flex items-center justify-between mt-2">
-          <span className="text-emerald-600 font-bold text-sm">₹{turf.price_per_hour}/hr</span>
+          {turf.starting_from_price != null && (
+            <span className="text-emerald-600 font-bold text-sm">From ₹{turf.starting_from_price}/slot</span>
+          )}
           <button
             onClick={onBook}
             className="bg-emerald-500 text-white text-xs px-2 py-1 rounded-lg font-medium"

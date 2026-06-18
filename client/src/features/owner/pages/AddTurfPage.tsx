@@ -43,7 +43,6 @@ interface FormData {
   // Step 2
   opening_time: string;
   closing_time: string;
-  price_per_hour: string;
   capacity: string;
   // Step 3
   courts: CourtDraft[];
@@ -396,7 +395,6 @@ export default function AddTurfPage() {
     turf_email: '',
     opening_time: '06:00',
     closing_time: '22:00',
-    price_per_hour: '',
     capacity: '22',
     courts: [emptyCourt(0)],
     photos: [],
@@ -435,8 +433,6 @@ export default function AddTurfPage() {
       if (!form.closing_time) errs.closing_time = 'Closing time is required';
       if (form.opening_time && form.closing_time && form.opening_time >= form.closing_time)
         errs.closing_time = 'Closing time must be after opening time';
-      if (!form.price_per_hour || Number(form.price_per_hour) <= 0)
-        errs.price_per_hour = 'Enter a valid price';
     }
     if (s === 3) {
       if (form.courts.length === 0) errs.courts = 'Add at least one court';
@@ -548,7 +544,6 @@ export default function AddTurfPage() {
         turf_email: form.turf_email.trim(),
         opening_time: form.opening_time,
         closing_time: form.closing_time,
-        price_per_hour: Number(form.price_per_hour),
         capacity: Number(form.capacity),
         is_public: true,
       });
@@ -818,28 +813,6 @@ export default function AddTurfPage() {
                 </div>
               )}
 
-              <div>
-                <label className={labelCls}>
-                  Base Price per Hour (₹) <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-semibold">
-                    ₹
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.price_per_hour}
-                    onChange={(e) => set('price_per_hour', e.target.value)}
-                    placeholder="800"
-                    className={`${inputCls} pl-8`}
-                  />
-                </div>
-                {errors.price_per_hour && <p className={errCls}>{errors.price_per_hour}</p>}
-                <p className="text-xs text-slate-400 mt-1">
-                  Used as default for courts. You can set specific prices per slot in Step 3.
-                </p>
-              </div>
             </div>
           </div>
         )}
@@ -1006,7 +979,6 @@ export default function AddTurfPage() {
               </h3>
               <Row label="Opening" value={form.opening_time} />
               <Row label="Closing" value={form.closing_time} />
-              <Row label="Base Price" value={`₹${form.price_per_hour}/hr`} />
               {openHours && <Row label="Open Hours" value={`${openHours}/day`} />}
             </div>
 

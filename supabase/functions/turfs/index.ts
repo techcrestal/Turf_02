@@ -3,6 +3,16 @@ import { getSupabase } from '../_shared/supabase.ts';
 import { authenticate } from '../_shared/auth.ts';
 import { ok, err, unauthorized, notFound, forbidden, conflict, preflight } from '../_shared/response.ts';
 
+function withStartingPrice(turfs: any[]): any[] {
+  return turfs.map((turf) => {
+    const prices = (turf.courts ?? []).flatMap((c: any) =>
+      (c.court_time_slots ?? []).map((s: any) => Number(s.price_per_slot))
+    );
+    const { courts, ...rest } = turf;
+    return { ...rest, starting_from_price: prices.length ? Math.min(...prices) : null };
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return preflight(corsHeaders);
 
@@ -18,17 +28,22 @@ Deno.serve(async (req) => {
       const auth = await authenticate(req);
       if (!auth) return unauthorized();
       const { data, error } = await supabase
-        .from('turfs').select('*')
+        .from('turfs')
+        .select('*, courts(court_time_slots(price_per_slot))')
         .eq('owner_id', auth.user.id)
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      return ok(data ?? []);
+      return ok(withStartingPrice(data ?? []));
     }
 
     // GET /turfs — public list
     if (method === 'GET' && sub === '') {
-      let query = supabase.from('turfs').select('*').is('deleted_at', null).eq('status', 'active');
+      let query = supabase
+        .from('turfs')
+        .select('*, courts(court_time_slots(price_per_slot))')
+        .is('deleted_at', null)
+        .eq('status', 'active');
       const sportId = url.searchParams.get('sport_id');
       const city = url.searchParams.get('city');
       const ownerId = url.searchParams.get('owner_id');
@@ -37,17 +52,20 @@ Deno.serve(async (req) => {
       if (ownerId) query = query.eq('owner_id', ownerId);
       const { data, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
-      return ok(data ?? []);
+      return ok(withStartingPrice(data ?? []));
     }
 
     // GET /turfs/:id
     if (method === 'GET' && sub && !sub.includes('/')) {
       const { data: turf, error } = await supabase
-        .from('turfs').select('*').eq('id', sub).single();
+        .from('turfs')
+        .select('*, courts(court_time_slots(price_per_slot))')
+        .eq('id', sub)
+        .single();
       if (error || !turf) return notFound('Turf not found');
       if (turf.deleted_at) return notFound('Turf not found');
       if (!turf.is_public) return forbidden('This turf is private');
-      return ok(turf);
+      return ok(withStartingPrice([turf])[0]);
     }
 
     // POST /turfs — create (protected)

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api/v1';
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? 'https://oexntxmelxgntruxwukl.supabase.co/functions/v1';
 
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9leG50eG1lbHhnbnRydXh3dWtsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMTEzMDQsImV4cCI6MjA5NTg4NzMwNH0.T4Z1GtjhV7xB5_Kf00ZGE3W-68483TCAQH3Gbv8bWNE';

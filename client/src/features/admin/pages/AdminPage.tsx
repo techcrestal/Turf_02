@@ -214,7 +214,7 @@ function RegistrationCard({
         <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <div><p className="text-slate-400">Sport</p><p className="text-slate-700 font-medium">{String(td.sport_id ?? '—').slice(0, 8)}…</p></div>
-            <div><p className="text-slate-400">Price</p><p className="text-slate-700 font-medium">₹{String(td.price_per_hour ?? '—')}/hr</p></div>
+            <div><p className="text-slate-400">Starting from</p><p className="text-slate-700 font-medium">{td.starting_from_price != null ? `₹${td.starting_from_price}/slot` : '—'}</p></div>
             <div><p className="text-slate-400">Hours</p><p className="text-slate-700 font-medium">{String(td.opening_time ?? '')} – {String(td.closing_time ?? '')}</p></div>
             <div><p className="text-slate-400">Courts</p><p className="text-slate-700 font-medium">{Array.isArray(td.courts) ? td.courts.length : '—'}</p></div>
             <div><p className="text-slate-400">Photos</p><p className="text-slate-700 font-medium">{Array.isArray(td.photos) ? td.photos.length : '—'}</p></div>

@@ -18,6 +18,7 @@ import TurfListPage from '../features/turfs/pages/TurfListPage';
 import TurfDetailPage from '../features/turfs/pages/TurfDetailPage';
 import BookingFlowPage from '../features/turfs/pages/BookingFlowPage';
 import BookingsPage from '../features/bookings/pages/BookingsPage';
+import PaymentPage from '../features/bookings/pages/PaymentPage';
 import PublicGamesPage from '../features/publicGames/pages/PublicGamesPage';
 import GameDetailPage from '../features/games/pages/GameDetailPage';
 import MyGamesPage from '../features/games/pages/MyGamesPage';
@@ -98,6 +99,7 @@ function AppRouter() {
         <Route path="/turfs" element={<TurfListPage />} />
         <Route path="/turfs/:id" element={<TurfDetailPage />} />
         <Route path="/book/:turfId" element={<BookingFlowPage />} />
+        <Route path="/payment" element={<PaymentPage />} />
         <Route path="/games" element={<PublicGamesPage />} />
         <Route path="/games/:id" element={<GameDetailPage />} />
         <Route path="/my-games" element={<MyGamesPage />} />

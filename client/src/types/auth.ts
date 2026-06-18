@@ -63,7 +63,6 @@ export interface OwnerRegistrationPayload {
     turf_email: string;
     opening_time: string;
     closing_time: string;
-    price_per_hour: number;
     capacity: number;
     courts: unknown[];
     photos: string[];

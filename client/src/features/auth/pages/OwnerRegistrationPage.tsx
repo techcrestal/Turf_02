@@ -188,7 +188,6 @@ export default function OwnerRegistrationPage() {
   const [turfEmail, setTurfEmail] = useState('');
   const [openingTime, setOpeningTime] = useState('06:00');
   const [closingTime, setClosingTime] = useState('22:00');
-  const [pricePerHour, setPricePerHour] = useState('');
 
   // Step 3 — courts
   const [courts, setCourts] = useState<CourtDraft[]>([emptyCourt(0)]);
@@ -215,7 +214,6 @@ export default function OwnerRegistrationPage() {
       if (!city.trim()) errs.city = 'City is required';
       if (!/^[6-9]\d{9}$/.test(contactNumber)) errs.contactNumber = 'Enter a valid 10-digit number';
       if (!turfEmail.includes('@')) errs.turfEmail = 'Enter a valid email';
-      if (!pricePerHour || Number(pricePerHour) <= 0) errs.pricePerHour = 'Enter a valid price';
       if (openingTime >= closingTime) errs.closingTime = 'Closing time must be after opening time';
     }
     if (s === 3) {
@@ -290,7 +288,6 @@ export default function OwnerRegistrationPage() {
           turf_email: turfEmail.trim(),
           opening_time: openingTime,
           closing_time: closingTime,
-          price_per_hour: Number(pricePerHour),
           capacity: 22,
           courts: courts.map(c => ({ ...c })),
           photos: photos.filter(p => !p.loading && p.url).map(p => p.url),
@@ -453,14 +450,6 @@ export default function OwnerRegistrationPage() {
                 </div>
               </div>
               <div>
-                <label className={labelCls}>Base Price per Hour (₹) *</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-semibold">₹</span>
-                  <input type="number" min="0" value={pricePerHour} onChange={e => setPricePerHour(e.target.value)} placeholder="800" className={`${inputCls} pl-8`} />
-                </div>
-                {errors.pricePerHour && <p className={errCls}>{errors.pricePerHour}</p>}
-              </div>
-              <div>
                 <label className={labelCls}>Description</label>
                 <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="Describe your turf..." className={inputCls} />
               </div>
@@ -548,7 +537,6 @@ export default function OwnerRegistrationPage() {
               <Row label="Address" value={`${address}, ${city}${state ? ', ' + state : ''}`} />
               <Row label="Contact" value={contactNumber} />
               <Row label="Hours" value={`${openingTime} – ${closingTime}`} />
-              <Row label="Base Price" value={`₹${pricePerHour}/hr`} />
             </div>
 
             <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">

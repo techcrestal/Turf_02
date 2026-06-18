@@ -74,7 +74,9 @@ export default function OwnerTurfListPage() {
                       </div>
                       <p className="text-xs text-slate-500">{sport?.name ?? 'Unknown'} · {turf.city ?? '—'}</p>
                       <div className="flex items-center gap-3 mt-1.5">
-                        <span className="text-xs text-emerald-600 font-semibold">₹{turf.price_per_hour}/hr</span>
+                        {turf.starting_from_price != null && (
+                          <span className="text-xs text-emerald-600 font-semibold">From ₹{turf.starting_from_price}/slot</span>
+                        )}
                         <span className="text-xs text-slate-400">👥 {turf.capacity} players</span>
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${turf.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                           {turf.is_active ? 'Active' : 'Inactive'}

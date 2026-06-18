@@ -81,7 +81,9 @@ export default function TurfListPage() {
                   <div className="p-3">
                     <h3 className="font-semibold text-slate-800 text-sm truncate">{turf.name}</h3>
                     <p className="text-slate-400 text-xs truncate">{turf.city}</p>
-                    <p className="text-emerald-600 font-bold text-sm mt-1">₹{turf.price_per_hour}/hr</p>
+                    {turf.starting_from_price != null && (
+                      <p className="text-emerald-600 font-bold text-sm mt-1">From ₹{turf.starting_from_price}/slot</p>
+                    )}
                     <button
                       onClick={() => navigate(`/turfs/${turf.id}`)}
                       className="mt-2 w-full bg-emerald-50 text-emerald-700 text-xs py-1.5 rounded-lg font-medium hover:bg-emerald-100 transition-colors"

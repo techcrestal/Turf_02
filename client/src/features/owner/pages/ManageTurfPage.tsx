@@ -43,7 +43,6 @@ export default function ManageTurfPage() {
     city: string;
     state: string;
     country: string;
-    price_per_hour: string;
     capacity: string;
     is_public: boolean;
   } | null>(null);
@@ -142,7 +141,6 @@ export default function ManageTurfPage() {
       city: turf.city ?? '',
       state: turf.state ?? '',
       country: turf.country ?? 'India',
-      price_per_hour: String(turf.price_per_hour),
       capacity: String(turf.capacity),
       is_public: turf.is_public,
     });
@@ -156,7 +154,6 @@ export default function ManageTurfPage() {
     const errs: Record<string, string> = {};
     if (!editForm.name.trim()) errs.name = 'Name is required';
     if (!editForm.city.trim()) errs.city = 'City is required';
-    if (!editForm.price_per_hour || Number(editForm.price_per_hour) <= 0) errs.price_per_hour = 'Enter valid price';
     if (!editForm.capacity || Number(editForm.capacity) <= 0) errs.capacity = 'Enter valid capacity';
     if (Object.keys(errs).length > 0) { setEditErrors(errs); return; }
     updateMutation.mutate({
@@ -167,7 +164,6 @@ export default function ManageTurfPage() {
       city: editForm.city.trim(),
       state: editForm.state.trim() || undefined,
       country: editForm.country.trim() || 'India',
-      price_per_hour: Number(editForm.price_per_hour),
       capacity: Number(editForm.capacity),
       is_public: editForm.is_public,
     });
@@ -265,8 +261,8 @@ export default function ManageTurfPage() {
             <p className="font-semibold text-slate-700 text-sm">📍 {turf.city ?? '—'}</p>
           </div>
           <div className="bg-slate-50 rounded-xl p-3">
-            <p className="text-xs text-slate-500 mb-0.5">Price/hr</p>
-            <p className="font-semibold text-emerald-600 text-sm">₹{turf.price_per_hour}</p>
+            <p className="text-xs text-slate-500 mb-0.5">Starting from</p>
+            <p className="font-semibold text-emerald-600 text-sm">{turf.starting_from_price != null ? `₹${turf.starting_from_price}/slot` : '—'}</p>
           </div>
           <div className="bg-slate-50 rounded-xl p-3">
             <p className="text-xs text-slate-500 mb-0.5">Capacity</p>
@@ -350,11 +346,6 @@ export default function ManageTurfPage() {
               <div>
                 <label className={labelCls}>Country</label>
                 <input type="text" value={editForm.country} onChange={(e) => setField('country', e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Price Per Hour (₹) *</label>
-                <input type="number" min="0" value={editForm.price_per_hour} onChange={(e) => setField('price_per_hour', e.target.value)} className={inputCls} />
-                {editErrors.price_per_hour && <p className="text-red-500 text-xs mt-1">{editErrors.price_per_hour}</p>}
               </div>
               <div>
                 <label className={labelCls}>Capacity *</label>
