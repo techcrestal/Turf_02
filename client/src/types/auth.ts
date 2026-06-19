@@ -7,6 +7,7 @@ export interface ProfilePayload {
   username?: string;
   age?: number;
   favorite_sports?: string[];
+  skill_ids?: string[];
 }
 
 export interface CheckUserResponse {

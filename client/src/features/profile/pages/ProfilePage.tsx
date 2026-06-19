@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo } from 'react';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
 import { usersApi } from '../../../api/endpoints/users';
-import { useQuery } from '@tanstack/react-query';
 import { sportsApi } from '../../../api/endpoints/sports';
+import { ratingsApi } from '../../../api/endpoints/ratings';
 import { getSportEmoji } from '../../../utils/helpers';
+import StarPicker from '../../../components/ratings/StarPicker';
 
 export default function ProfilePage() {
   const { user, logout, refreshUser } = useAuth();
@@ -20,6 +21,7 @@ export default function ProfilePage() {
     username: user?.username ?? '',
     age: user?.age?.toString() ?? '',
     favorite_sports: user?.favorite_sports ?? [],
+    skill_ids: user?.skill_ids ?? [],
   });
 
   const { data: sports = [] } = useQuery({
@@ -27,12 +29,46 @@ export default function ProfilePage() {
     queryFn: sportsApi.getSports,
   });
 
+  const { data: allSkills = [] } = useQuery({
+    queryKey: ['sport-skills'],
+    queryFn: ratingsApi.getAllSkills,
+  });
+
+  const { data: myRatings } = useQuery({
+    queryKey: ['player-ratings', user?.id],
+    queryFn: () => ratingsApi.getPlayerRatings(user!.id),
+    enabled: !!user?.id,
+  });
+
+  const skillsBySport = useMemo(() => {
+    const map: Record<string, typeof allSkills> = {};
+    allSkills.forEach((s) => {
+      if (!map[s.sport_id]) map[s.sport_id] = [];
+      map[s.sport_id].push(s);
+    });
+    return map;
+  }, [allSkills]);
+
   const toggleSport = (id: string) => {
+    const removing = form.favorite_sports.includes(id);
+    const sportSkillIds = removing ? (skillsBySport[id] ?? []).map((s) => s.id) : [];
     setForm((prev) => ({
       ...prev,
-      favorite_sports: prev.favorite_sports.includes(id)
+      favorite_sports: removing
         ? prev.favorite_sports.filter((s) => s !== id)
         : [...prev.favorite_sports, id],
+      skill_ids: removing
+        ? prev.skill_ids.filter((sid) => !sportSkillIds.includes(sid))
+        : prev.skill_ids,
+    }));
+  };
+
+  const toggleSkill = (id: string) => {
+    setForm((prev) => ({
+      ...prev,
+      skill_ids: prev.skill_ids.includes(id)
+        ? prev.skill_ids.filter((s) => s !== id)
+        : [...prev.skill_ids, id],
     }));
   };
 
@@ -44,6 +80,7 @@ export default function ProfilePage() {
         username: form.username,
         age: form.age ? parseInt(form.age) : undefined,
         favorite_sports: form.favorite_sports,
+        skill_ids: form.skill_ids,
       }),
     onSuccess: async () => {
       await refreshUser();
@@ -132,6 +169,23 @@ export default function ProfilePage() {
               </div>
             )}
 
+            {/* Player skill ratings */}
+            {myRatings && myRatings.skills.length > 0 && (
+              <div>
+                <p className="text-sm font-semibold text-slate-700 mb-3">My Skill Ratings</p>
+                <div className="space-y-2">
+                  {myRatings.skills.map((sr) => (
+                    <div key={sr.skill_id} className="flex items-center gap-3">
+                      <span className="text-xs text-slate-600 w-28 flex-shrink-0">{sr.display_name}</span>
+                      <StarPicker value={Math.round(sr.average)} readonly size="sm" />
+                      <span className="text-xs font-medium text-slate-500">{sr.average.toFixed(1)}</span>
+                      <span className="text-xs text-slate-400">({sr.count})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <button
               onClick={() => {
                 setForm({
@@ -140,6 +194,7 @@ export default function ProfilePage() {
                   username: user?.username ?? '',
                   age: user?.age?.toString() ?? '',
                   favorite_sports: user?.favorite_sports ?? [],
+                  skill_ids: user?.skill_ids ?? [],
                 });
                 setEditing(true);
               }}
@@ -211,6 +266,43 @@ export default function ProfilePage() {
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Skill selection per selected sport */}
+            {form.favorite_sports.length > 0 && (
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-slate-700 block">
+                  Your Skills <span className="text-slate-400 font-normal text-xs">(others can rate you on these)</span>
+                </label>
+                {form.favorite_sports.map((sportId) => {
+                  const sport = sports.find((s) => s.id === sportId);
+                  const sportSkills = skillsBySport[sportId] ?? [];
+                  if (!sportSkills.length) return null;
+                  return (
+                    <div key={sportId}>
+                      <p className="text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+                        {getSportEmoji(sport?.name ?? '')} {sport?.name}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {sportSkills.map((skill) => (
+                          <button
+                            key={skill.id}
+                            type="button"
+                            onClick={() => toggleSkill(skill.id)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                              form.skill_ids.includes(skill.id)
+                                ? 'bg-emerald-500 text-white border-emerald-500'
+                                : 'bg-white text-slate-600 border-slate-200'
+                            }`}
+                          >
+                            {skill.display_name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

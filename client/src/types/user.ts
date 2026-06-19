@@ -14,5 +14,6 @@ export interface UserProfile {
   profile_completed: boolean;
   promotions_opt_in: boolean;
   favorite_sports: string[];
+  skill_ids: string[];
   role: 'customer' | 'owner' | 'admin';
 }

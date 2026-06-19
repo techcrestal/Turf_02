@@ -30,7 +30,14 @@ export function useNotificationAlert() {
         const latest = fresh[0];
         setAlert({ title: latest.title, body: latest.body });
         fresh.forEach((n) => seenIdsRef.current.add(n.id));
+        // Invalidate notifications badge
         queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        // Invalidate all booking queries so pages refetch on next visit
+        queryClient.invalidateQueries({ queryKey: ['bookings'] });
+        queryClient.invalidateQueries({ queryKey: ['bookings-joined'] });
+        queryClient.invalidateQueries({ queryKey: ['bookings-pending-joins'] });
+        queryClient.invalidateQueries({ queryKey: ['bookings-public'] });
+        queryClient.invalidateQueries({ queryKey: ['join-requests'] });
         if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
         dismissTimerRef.current = setTimeout(() => setAlert(null), 5000);
       }

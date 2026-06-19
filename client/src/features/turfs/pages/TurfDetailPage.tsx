@@ -4,12 +4,16 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { turfsApi } from '../../../api/endpoints/turfs';
 import { sportsApi } from '../../../api/endpoints/sports';
 import { courtsApi } from '../../../api/endpoints/courts';
+import { ratingsApi } from '../../../api/endpoints/ratings';
 import { getSportEmoji, turfGradient } from '../../../utils/helpers';
+import RateTurfModal from '../../../components/ratings/RateTurfModal';
+import StarPicker from '../../../components/ratings/StarPicker';
 
 export default function TurfDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [activePhoto, setActivePhoto] = useState(0);
+  const [showRateModal, setShowRateModal] = useState(false);
 
   const { data: turf, isLoading } = useQuery({
     queryKey: ['turf', id],
@@ -35,6 +39,12 @@ export default function TurfDetailPage() {
   });
 
   const sport = sports.find((s) => s.id === turf?.sport_id);
+
+  const { data: ratingData } = useQuery({
+    queryKey: ['turf-ratings', id],
+    queryFn: () => ratingsApi.getTurfRatings(id!),
+    enabled: !!id,
+  });
 
   if (isLoading) {
     return (
@@ -250,6 +260,65 @@ export default function TurfDetailPage() {
         </div>
       )}
 
+      {/* ── Ratings ─────────────────────────────────────────────── */}
+      <div className="px-5 py-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-bold text-slate-800">Ratings</h2>
+          <button
+            onClick={() => setShowRateModal(true)}
+            className="text-sm font-medium text-emerald-600 hover:text-emerald-700"
+          >
+            ✏️ Rate Turf
+          </button>
+        </div>
+
+        {ratingData && ratingData.count > 0 ? (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3">
+            {/* Overall */}
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+              <span className="text-3xl font-extrabold text-slate-800">{ratingData.overall.toFixed(1)}</span>
+              <div>
+                <StarPicker value={Math.round(ratingData.overall)} readonly size="sm" />
+                <p className="text-xs text-slate-400 mt-0.5">{ratingData.count} rating{ratingData.count !== 1 ? 's' : ''}</p>
+              </div>
+            </div>
+            {/* Per-parameter bars */}
+            {[
+              { key: 'surface',     label: 'Surface' },
+              { key: 'facilities',  label: 'Facilities' },
+              { key: 'lighting',    label: 'Lighting' },
+              { key: 'cleanliness', label: 'Cleanliness' },
+              { key: 'value',       label: 'Value' },
+              { key: 'staff',       label: 'Staff' },
+            ].map(({ key, label }) => {
+              const val = ratingData.averages[key] ?? 0;
+              return (
+                <div key={key} className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 w-20 flex-shrink-0">{label}</span>
+                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400 rounded-full"
+                      style={{ width: `${(val / 5) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-medium text-slate-600 w-6 text-right">{val > 0 ? val.toFixed(1) : '—'}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="bg-slate-50 rounded-2xl p-4 text-center">
+            <p className="text-slate-400 text-sm">No ratings yet.</p>
+            <button
+              onClick={() => setShowRateModal(true)}
+              className="mt-2 text-emerald-600 text-sm font-medium hover:underline"
+            >
+              Be the first to rate →
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* ── Book Button ─────────────────────────────────────────── */}
       <div className="fixed bottom-16 left-0 right-0 px-5 pb-2 bg-gradient-to-t from-white via-white to-transparent pt-4">
         <button
@@ -260,6 +329,14 @@ export default function TurfDetailPage() {
           {turf.status === 'active' ? '🏟️ Book This Turf' : 'Currently Unavailable'}
         </button>
       </div>
+
+      {showRateModal && (
+        <RateTurfModal
+          turfId={turf.id}
+          turfName={turf.name}
+          onClose={() => setShowRateModal(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../../context/AuthContext';
 import { sportsApi } from '../../../api/endpoints/sports';
+import { ratingsApi } from '../../../api/endpoints/ratings';
 import { getSportEmoji } from '../../../utils/helpers';
 
 export default function ProfileCreationPage() {
@@ -10,6 +11,7 @@ export default function ProfileCreationPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', username: '', age: '' });
   const [selectedSports, setSelectedSports] = useState<string[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -18,8 +20,33 @@ export default function ProfileCreationPage() {
     queryFn: sportsApi.getSports,
   });
 
+  const { data: allSkills = [] } = useQuery({
+    queryKey: ['sport-skills'],
+    queryFn: ratingsApi.getAllSkills,
+  });
+
+  const skillsBySport = useMemo(() => {
+    const map: Record<string, typeof allSkills> = {};
+    allSkills.forEach((s) => {
+      if (!map[s.sport_id]) map[s.sport_id] = [];
+      map[s.sport_id].push(s);
+    });
+    return map;
+  }, [allSkills]);
+
   const toggleSport = (id: string) => {
+    const removing = selectedSports.includes(id);
     setSelectedSports((prev) =>
+      removing ? prev.filter((s) => s !== id) : [...prev, id]
+    );
+    if (removing) {
+      const sportSkillIds = (skillsBySport[id] ?? []).map((s) => s.id);
+      setSelectedSkills((prev) => prev.filter((sid) => !sportSkillIds.includes(sid)));
+    }
+  };
+
+  const toggleSkill = (id: string) => {
+    setSelectedSkills((prev) =>
       prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
     );
   };
@@ -39,6 +66,7 @@ export default function ProfileCreationPage() {
         username: form.username,
         age: form.age ? parseInt(form.age) : undefined,
         favorite_sports: selectedSports,
+        skill_ids: selectedSkills,
       });
       navigate('/home');
     } catch (err: any) {
@@ -128,6 +156,43 @@ export default function ProfileCreationPage() {
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Skill selection — shown per selected sport */}
+        {selectedSports.length > 0 && (
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-slate-700 block">
+              Your Skills <span className="text-slate-400 font-normal">(so others can rate you)</span>
+            </label>
+            {selectedSports.map((sportId) => {
+              const sport = sports.find((s) => s.id === sportId);
+              const sportSkills = skillsBySport[sportId] ?? [];
+              if (!sportSkills.length) return null;
+              return (
+                <div key={sportId}>
+                  <p className="text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+                    {getSportEmoji(sport?.name ?? '')} {sport?.name}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {sportSkills.map((skill) => (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        onClick={() => toggleSkill(skill.id)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                          selectedSkills.includes(skill.id)
+                            ? 'bg-emerald-500 text-white border-emerald-500'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-400'
+                        }`}
+                      >
+                        {skill.display_name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

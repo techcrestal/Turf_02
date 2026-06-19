@@ -4,6 +4,8 @@ import { turfsApi } from '../../../api/endpoints/turfs';
 import { formatDate, formatTime } from '../../../utils/helpers';
 import { useMemo, useState } from 'react';
 import { Booking, GameType } from '../../../types/booking';
+import RateTurfModal from '../../../components/ratings/RateTurfModal';
+import PlayersModal from '../../../components/ratings/PlayersModal';
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
@@ -20,6 +22,10 @@ export default function BookingsPage() {
   const [tab, setTab] = useState<Tab>('my-games');
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [expandedRequestsId, setExpandedRequestsId] = useState<string | null>(null);
+  const [rateTurfBooking, setRateTurfBooking] = useState<{ id: string; turfName: string; turfId: string } | null>(null);
+  const [playersModal, setPlayersModal] = useState<{
+    bookingId: string; isHost: boolean; isPast: boolean; pendingRequests: typeof joinRequests;
+  } | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -286,6 +292,31 @@ export default function BookingsPage() {
                                 </button>
                               </div>
                             )}
+
+                            {/* Bottom action row */}
+                            {booking.status !== 'cancelled' && (
+                              <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                                {new Date(booking.start_time) < new Date() && (
+                                  <button
+                                    onClick={() => setRateTurfBooking({ id: booking.id, turfId: booking.turf_id, turfName: turf?.name ?? 'Turf' })}
+                                    className="text-xs border border-amber-300 text-amber-700 hover:bg-amber-50 font-medium py-1.5 px-3 rounded-lg transition-colors"
+                                  >
+                                    ⭐ Rate Turf
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setPlayersModal({
+                                    bookingId: booking.id,
+                                    isHost: true,
+                                    isPast: new Date(booking.start_time) < new Date(),
+                                    pendingRequests: pendingRequests,
+                                  })}
+                                  className="flex-1 text-xs border border-violet-300 text-violet-700 hover:bg-violet-50 font-medium py-1.5 rounded-lg transition-colors"
+                                >
+                                  👥 Players {pendingRequests.length > 0 && `(${pendingRequests.length} pending)`}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -352,6 +383,29 @@ export default function BookingsPage() {
                                 className="text-xs text-slate-500 border border-slate-200 px-2 py-0.5 rounded-lg hover:bg-slate-50 flex-shrink-0"
                               >
                                 Leave
+                              </button>
+                            </div>
+
+                            {/* Bottom action row */}
+                            <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                              {new Date(game.start_time) < new Date() && (
+                                <button
+                                  onClick={() => setRateTurfBooking({ id: game.id, turfId: game.turf_id, turfName: turf?.name ?? 'Turf' })}
+                                  className="text-xs border border-amber-300 text-amber-700 hover:bg-amber-50 font-medium py-1.5 px-3 rounded-lg transition-colors"
+                                >
+                                  ⭐ Rate Turf
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setPlayersModal({
+                                  bookingId: game.id,
+                                  isHost: false,
+                                  isPast: new Date(game.start_time) < new Date(),
+                                  pendingRequests: [],
+                                })}
+                                className="flex-1 text-xs border border-violet-300 text-violet-700 hover:bg-violet-50 font-medium py-1.5 rounded-lg transition-colors"
+                              >
+                                👥 Players
                               </button>
                             </div>
                           </div>
@@ -443,6 +497,24 @@ export default function BookingsPage() {
           </>
         )}
       </div>
+
+      {rateTurfBooking && (
+        <RateTurfModal
+          turfId={rateTurfBooking.turfId}
+          turfName={rateTurfBooking.turfName}
+          onClose={() => setRateTurfBooking(null)}
+        />
+      )}
+      {playersModal && (
+        <PlayersModal
+          bookingId={playersModal.bookingId}
+          isHost={playersModal.isHost}
+          isPast={playersModal.isPast}
+          pendingRequests={playersModal.pendingRequests}
+          onClose={() => setPlayersModal(null)}
+          onAction={() => { invalidateAll(); }}
+        />
+      )}
     </div>
   );
 }

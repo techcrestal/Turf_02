@@ -194,6 +194,33 @@ Deno.serve(async (req) => {
       return ok(data ?? []);
     }
 
+    // GET /bookings/:id/participants — host + approved participants with skills
+    if (method === 'GET' && sub.endsWith('/participants')) {
+      const bookingId = sub.replace('/participants', '');
+      const { data: booking } = await supabase.from('bookings').select('user_id').eq('id', bookingId).single();
+      if (!booking) return notFound('Booking not found');
+      const { data: parts } = await supabase.from('booking_participants')
+        .select('user_id').eq('booking_id', bookingId).eq('status', 'approved');
+      const allIds = [...new Set([booking.user_id, ...(parts ?? []).map((p: any) => p.user_id)])];
+      const { data: users } = await supabase.from('users').select('id, name, username').in('id', allIds);
+      const { data: userSkillsRaw } = await supabase.from('user_skills').select('user_id, skill_id').in('user_id', allIds);
+      const skillIds = [...new Set((userSkillsRaw ?? []).map((us: any) => us.skill_id))];
+      const skillsData = skillIds.length
+        ? (await supabase.from('sport_skills').select('id, display_name, sport_id').in('id', skillIds)).data
+        : [];
+      const skillMeta = Object.fromEntries((skillsData ?? []).map((s: any) => [s.id, s]));
+      const skillsByUser: Record<string, any[]> = {};
+      (userSkillsRaw ?? []).forEach((us: any) => {
+        if (!skillsByUser[us.user_id]) skillsByUser[us.user_id] = [];
+        if (skillMeta[us.skill_id]) skillsByUser[us.user_id].push(skillMeta[us.skill_id]);
+      });
+      return ok((users ?? []).map((u: any) => ({
+        id: u.id, name: u.name ?? u.username ?? 'Player',
+        is_host: u.id === booking.user_id,
+        skills: skillsByUser[u.id] ?? [],
+      })));
+    }
+
     // GET /bookings/:id
     if (method === 'GET' && sub && !sub.includes('/')) {
       const { data: booking } = await supabase.from('bookings').select('*').eq('id', sub).single();

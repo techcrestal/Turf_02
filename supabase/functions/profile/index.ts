@@ -7,7 +7,12 @@ async function getProfile(supabase: any, userId: string) {
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
   if (!user) return null;
   const { data: favs } = await supabase.from('user_sports').select('sport_id').eq('user_id', userId);
-  return { ...user, favorite_sports: (favs ?? []).map((r: any) => r.sport_id) };
+  const { data: skills } = await supabase.from('user_skills').select('skill_id').eq('user_id', userId);
+  return {
+    ...user,
+    favorite_sports: (favs ?? []).map((r: any) => r.sport_id),
+    skill_ids: (skills ?? []).map((r: any) => r.skill_id),
+  };
 }
 
 Deno.serve(async (req) => {
@@ -33,11 +38,15 @@ Deno.serve(async (req) => {
     // POST /profile — create profile
     if (method === 'POST' && sub === '') {
       const body = await req.json();
-      const { name, email, username, age, favorite_sports } = body;
+      const { name, email, username, age, favorite_sports, skill_ids } = body;
       await supabase.from('users').update({ name, email, username, age, profile_completed: true }).eq('id', auth.user.id);
       await supabase.from('user_sports').delete().eq('user_id', auth.user.id);
       if (favorite_sports?.length) {
         await supabase.from('user_sports').insert(favorite_sports.map((sid: string) => ({ user_id: auth.user.id, sport_id: sid })));
+      }
+      await supabase.from('user_skills').delete().eq('user_id', auth.user.id);
+      if (skill_ids?.length) {
+        await supabase.from('user_skills').insert(skill_ids.map((sid: string) => ({ user_id: auth.user.id, skill_id: sid })));
       }
       const profile = await getProfile(supabase, auth.user.id);
       return new Response(JSON.stringify(profile), { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -46,7 +55,7 @@ Deno.serve(async (req) => {
     // PUT /profile — update profile
     if (method === 'PUT' && sub === '') {
       const body = await req.json();
-      const { name, email, username, age, favorite_sports } = body;
+      const { name, email, username, age, favorite_sports, skill_ids } = body;
       const update: Record<string, any> = {};
       if (name !== undefined) update.name = name;
       if (email !== undefined) update.email = email;
@@ -59,6 +68,12 @@ Deno.serve(async (req) => {
         await supabase.from('user_sports').delete().eq('user_id', auth.user.id);
         if (favorite_sports.length) {
           await supabase.from('user_sports').insert(favorite_sports.map((sid: string) => ({ user_id: auth.user.id, sport_id: sid })));
+        }
+      }
+      if (skill_ids !== undefined) {
+        await supabase.from('user_skills').delete().eq('user_id', auth.user.id);
+        if (skill_ids.length) {
+          await supabase.from('user_skills').insert(skill_ids.map((sid: string) => ({ user_id: auth.user.id, skill_id: sid })));
         }
       }
       const profile = await getProfile(supabase, auth.user.id);
