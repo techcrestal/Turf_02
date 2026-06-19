@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
   if (req.method === 'GET' && resource === 'courts' && !resourceId) {
     const { data, error } = await supabase
       .from('courts')
-      .select('id, name, size, court_type, description, sort_order, deleted_at')
+      .select('id, name, size, court_type, description, sort_order, deleted_at, court_time_slots(id, day_of_week, start_time, end_time, price_per_slot, slot_duration_minutes)')
       .eq('turf_id', turfId)
       .is('deleted_at', null)
       .order('sort_order');
@@ -231,6 +231,46 @@ Deno.serve(async (req) => {
   }
 
   // ─────────────────────────────── BOOKINGS ───────────────────────────────────
+
+  // GET /:id/bookings/availability?court_id=&date=YYYY-MM-DD
+  // Returns all booked slots (online + manual) for a court/turf on a date
+  if (req.method === 'GET' && resource === 'bookings' && resourceId === 'availability') {
+    const courtId = url.searchParams.get('court_id');
+    const date = url.searchParams.get('date');
+    if (!date) return err('date is required');
+
+    const startISO = `${date}T00:00:00.000Z`;
+    const endISO = `${date}T23:59:59.999Z`;
+
+    // Online bookings (stored as UTC timestamps)
+    let onlineQ = supabase
+      .from('bookings')
+      .select('start_time, end_time')
+      .is('deleted_at', null)
+      .neq('status', 'cancelled')
+      .eq('turf_id', turfId)
+      .gte('start_time', startISO)
+      .lte('start_time', endISO);
+    if (courtId) onlineQ = onlineQ.eq('court_id', courtId);
+    const { data: onlineData } = await onlineQ;
+
+    // Manual bookings (stored as DATE + TIME, no timezone)
+    let manualQ = supabase
+      .from('manual_bookings')
+      .select('start_time, end_time')
+      .eq('turf_id', turfId)
+      .eq('booking_date', date);
+    if (courtId) manualQ = manualQ.eq('court_id', courtId);
+    const { data: manualData } = await manualQ;
+
+    const bookedSlots = [
+      ...(onlineData ?? []).map((b) => ({ start_time: b.start_time, end_time: b.end_time, type: 'online' })),
+      // Build local-time ISO strings for manual so client Date() treats them as local
+      ...(manualData ?? []).map((b) => ({ start_time: `${date}T${b.start_time}`, end_time: `${date}T${b.end_time}`, type: 'manual' })),
+    ];
+
+    return ok({ booked_slots: bookedSlots });
+  }
 
   // GET /:id/bookings
   if (req.method === 'GET' && resource === 'bookings' && !resourceId) {

@@ -9,6 +9,9 @@ export interface Booking {
   status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
   price: number;
   game_type: GameType;
+  payment_status?: 'pending' | 'completed' | 'failed' | 'refunded' | 'partial';
+  advance_amount?: number | null;
+  remaining_balance?: number | null;
 }
 
 export interface BookingCreatePayload {

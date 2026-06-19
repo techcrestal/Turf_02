@@ -67,8 +67,9 @@ export const bookingsApi = {
     const response = await apiClient.post('/bookings', payload);
     return response.data;
   },
-  cancelBooking: async (bookingId: string): Promise<void> => {
-    await apiClient.put(`/bookings/${bookingId}/cancel`);
+  cancelBooking: async (bookingId: string): Promise<{ refund_amount: number; refund_status: string }> => {
+    const response = await apiClient.put(`/bookings/${bookingId}/cancel`);
+    return response.data;
   },
   updateGameType: async (bookingId: string, gameType: GameType): Promise<Booking> => {
     const response = await apiClient.put(`/bookings/${bookingId}/game-type`, { game_type: gameType });

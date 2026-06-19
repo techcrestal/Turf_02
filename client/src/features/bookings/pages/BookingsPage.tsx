@@ -86,7 +86,13 @@ export default function BookingsPage() {
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => bookingsApi.cancelBooking(id),
-    onSuccess: () => { invalidateAll(); showToast('Booking cancelled'); },
+    onSuccess: (data) => {
+      invalidateAll();
+      const msg = data?.refund_amount > 0
+        ? `Booking cancelled · ₹${data.refund_amount} refund initiated`
+        : 'Booking cancelled';
+      showToast(msg);
+    },
     onError: () => showToast('Failed to cancel'),
   });
 

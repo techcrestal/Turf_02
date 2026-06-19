@@ -445,10 +445,12 @@ export default function BookingFlowPage() {
     },
     onSuccess: (booking) => {
       queryClient.invalidateQueries({ queryKey: ['availability'] });
+      const chargeNow = booking.advance_amount != null ? Number(booking.advance_amount) : totalPrice;
       navigate('/payment', {
         state: {
           bookingId: booking.id,
-          amount: totalPrice,
+          amount: chargeNow,
+          totalAmount: totalPrice,
           turfName: turf?.name ?? '',
           courtName: selectedCourt?.name,
           courtDetails: selectedCourt ? `${selectedCourt.size} · ${selectedCourt.court_type}` : undefined,

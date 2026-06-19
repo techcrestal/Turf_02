@@ -51,16 +51,45 @@ Deno.serve(async (req) => {
       const { data, error } = await query;
       if (error) throw error;
 
+      // Also include manual (cash) bookings so they block online booking
+      const startDate = start.slice(0, 10);
+      const endDate = end.slice(0, 10);
+      let manualQuery = supabase
+        .from('manual_bookings')
+        .select('booking_date, start_time, end_time')
+        .gte('booking_date', startDate)
+        .lte('booking_date', endDate);
+      if (courtId) {
+        manualQuery = manualQuery.eq('court_id', courtId);
+      } else {
+        manualQuery = manualQuery.eq('turf_id', turfId!);
+      }
+      const { data: manualData } = await manualQuery;
+
       const rawSlots = data ?? [];
-      const bookedSlots = rawSlots.map((b) => ({
-        start_time: b.start_time,
-        end_time: b.end_time,
-        game_type: b.game_type ?? 'private',
-        ...(b.game_type === 'public' ? { booking_id: b.id } : {}),
+      // Construct local-time ISO strings for manual bookings (no 'Z' = local time in client)
+      const manualAsSlots = (manualData ?? []).map((b) => ({
+        start_time: `${b.booking_date}T${b.start_time}`,
+        end_time: `${b.booking_date}T${b.end_time}`,
       }));
 
+      const bookedSlots = [
+        ...rawSlots.map((b) => ({
+          start_time: b.start_time,
+          end_time: b.end_time,
+          game_type: b.game_type ?? 'private',
+          ...(b.game_type === 'public' ? { booking_id: b.id } : {}),
+        })),
+        ...manualAsSlots.map((s) => ({ ...s, game_type: 'private' as const })),
+      ];
+
+      const allForDate = [
+        ...rawSlots,
+        ...manualAsSlots,
+      ];
+
       const slotsByDate = new Map<string, { start_time: string; end_time: string }[]>();
-      for (const slot of rawSlots) {
+      for (const slot of allForDate) {
         const dateStr = slot.start_time.slice(0, 10);
         if (!slotsByDate.has(dateStr)) slotsByDate.set(dateStr, []);
         slotsByDate.get(dateStr)!.push(slot);
@@ -236,10 +265,35 @@ Deno.serve(async (req) => {
       if (new Date(start_time) >= new Date(end_time)) return conflict('start_time must be before end_time');
       const { data: turf } = await supabase.from('turfs').select('id').eq('id', turf_id).single();
       if (!turf) return notFound('Turf not found');
+
+      // Calculate advance amount from turf settings
+      const { data: settings } = await supabase
+        .from('turf_settings')
+        .select('advance_payment_enabled, advance_payment_type, advance_payment_value')
+        .eq('turf_id', turf_id)
+        .maybeSingle();
+
+      let advance_amount: number | null = null;
+      let remaining_balance: number | null = null;
+      if (settings?.advance_payment_enabled && price > 0) {
+        if (settings.advance_payment_type === 'percentage' && settings.advance_payment_value) {
+          advance_amount = Math.round(price * settings.advance_payment_value) / 100;
+        } else if (settings.advance_payment_type === 'fixed' && settings.advance_payment_value) {
+          advance_amount = Math.min(Number(settings.advance_payment_value), price);
+        }
+        if (advance_amount !== null) {
+          remaining_balance = Math.round((price - advance_amount) * 100) / 100;
+        }
+      }
+
       const resolvedGameType = game_type === 'public' ? 'public' : 'private';
       const { data, error } = await supabase
         .from('bookings')
-        .insert({ user_id: auth.user.id, turf_id, court_id: court_id ?? null, start_time, end_time, price, status: 'confirmed', payment_status: 'pending', game_type: resolvedGameType })
+        .insert({
+          user_id: auth.user.id, turf_id, court_id: court_id ?? null,
+          start_time, end_time, price, status: 'confirmed', payment_status: 'pending',
+          game_type: resolvedGameType, advance_amount, remaining_balance,
+        })
         .select().single();
       if (error) throw error;
       return new Response(JSON.stringify(data), { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -337,10 +391,66 @@ Deno.serve(async (req) => {
       if (!booking || booking.deleted_at) return notFound('Booking not found');
       if (booking.user_id !== auth.user.id) return forbidden('Not authorized');
       if (booking.status === 'cancelled') return conflict('Already cancelled');
+
+      let refund_amount = 0;
+      let refund_status = 'none';
+
+      // Apply cancellation policy
+      const { data: settings } = await supabase
+        .from('turf_settings')
+        .select('cancellation_enabled, cancellation_window_hours, cancellation_refund_percentage')
+        .eq('turf_id', booking.turf_id)
+        .maybeSingle();
+
+      if (settings?.cancellation_enabled && booking.payment_status !== 'pending') {
+        const hoursUntil = (new Date(booking.start_time).getTime() - Date.now()) / 3_600_000;
+        const windowHours = settings.cancellation_window_hours ?? 24;
+
+        if (hoursUntil >= windowHours) {
+          const { data: payment } = await supabase
+            .from('payments')
+            .select('amount, provider_transaction_id')
+            .eq('booking_id', bookingId)
+            .eq('status', 'completed')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (payment) {
+            const refundPct = settings.cancellation_refund_percentage ?? 100;
+            refund_amount = Math.round(payment.amount * refundPct) / 100;
+
+            if (payment.provider_transaction_id) {
+              try {
+                const rzpKey = Deno.env.get('RAZORPAY_KEY_ID') ?? '';
+                const rzpSecret = Deno.env.get('RAZORPAY_KEY_SECRET') ?? '';
+                const refundRes = await fetch(
+                  `https://api.razorpay.com/v1/payments/${payment.provider_transaction_id}/refund`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: 'Basic ' + btoa(`${rzpKey}:${rzpSecret}`),
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ amount: Math.round(refund_amount * 100) }),
+                  },
+                );
+                refund_status = refundRes.ok ? 'refunded' : 'refund_failed';
+              } catch {
+                refund_status = 'refund_failed';
+              }
+            }
+          }
+        }
+      }
+
+      const newPaymentStatus = refund_status === 'refunded' ? 'refunded' : booking.payment_status;
       const { data, error } = await supabase
-        .from('bookings').update({ status: 'cancelled' }).eq('id', bookingId).select().single();
+        .from('bookings')
+        .update({ status: 'cancelled', payment_status: newPaymentStatus })
+        .eq('id', bookingId).select().single();
       if (error) throw error;
-      return ok(data);
+      return ok({ ...data, refund_amount, refund_status });
     }
 
     // PUT /bookings/:id/game-type — toggle private/public

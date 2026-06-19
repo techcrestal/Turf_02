@@ -102,10 +102,17 @@ Deno.serve(async (req) => {
       });
       if (payErr) throw payErr;
 
-      // Update booking payment_status
+      // Determine if this is a full or partial payment
+      const { data: bk } = await supabase
+        .from('bookings')
+        .select('price, advance_amount')
+        .eq('id', booking_id)
+        .single();
+      const isPartial = bk?.advance_amount != null && amount < Number(bk.price);
+
       await supabase
         .from('bookings')
-        .update({ payment_status: 'completed' })
+        .update({ payment_status: isPartial ? 'partial' : 'completed' })
         .eq('id', booking_id);
 
       return ok({ success: true, payment_id: razorpay_payment_id });

@@ -18,6 +18,15 @@ export interface Turf {
   sports?: { name: string };
 }
 
+export interface CourtTimeSlot {
+  id: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  price_per_slot: number;
+  slot_duration_minutes: number;
+}
+
 export interface Court {
   id: string;
   name: string;
@@ -25,6 +34,13 @@ export interface Court {
   court_type: string;
   description: string | null;
   sort_order: number;
+  court_time_slots?: CourtTimeSlot[];
+}
+
+export interface BookingAvailabilitySlot {
+  start_time: string;
+  end_time: string;
+  type: 'online' | 'manual';
 }
 
 export interface Slot {
@@ -136,5 +152,15 @@ export const adminTurfs = {
   },
   deleteBooking: async (turfId: string, bookingId: string): Promise<void> => {
     await api.delete(`/admin-turfs/${turfId}/bookings/${bookingId}`);
+  },
+  getBookingAvailability: async (
+    turfId: string,
+    courtId: string | null,
+    date: string,
+  ): Promise<BookingAvailabilitySlot[]> => {
+    const params = new URLSearchParams({ date });
+    if (courtId) params.set('court_id', courtId);
+    const { data } = await api.get(`/admin-turfs/${turfId}/bookings/availability?${params}`);
+    return data.booked_slots ?? [];
   },
 };

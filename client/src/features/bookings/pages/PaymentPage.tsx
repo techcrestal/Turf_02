@@ -4,7 +4,8 @@ import { paymentsApi } from '../../../api/endpoints/payments';
 
 interface PaymentState {
   bookingId: string;
-  amount: number;
+  amount: number;       // charge now (advance or full)
+  totalAmount?: number; // full booking price — present when advance < total
   turfName: string;
   courtName?: string;
   courtDetails?: string;
@@ -56,12 +57,20 @@ export default function PaymentPage() {
     return null;
   }
 
+  const isAdvanceOnly = state.totalAmount != null && state.totalAmount > state.amount;
+  const balanceDue = isAdvanceOnly ? state.totalAmount! - state.amount : 0;
+
   if (paid) {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center px-6 text-center">
         <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center text-5xl mb-5">✅</div>
         <h2 className="text-2xl font-extrabold text-slate-800 mb-2">Booking Confirmed!</h2>
-        <p className="text-slate-500 text-sm mb-1">Payment of ₹{state.amount} received</p>
+        <p className="text-slate-500 text-sm mb-1">
+          {isAdvanceOnly ? `Advance of ₹${state.amount} received` : `Payment of ₹${state.amount} received`}
+        </p>
+        {isAdvanceOnly && (
+          <p className="text-amber-600 text-sm font-medium mb-1">₹{balanceDue} due at the venue</p>
+        )}
         {state.courtName && (
           <p className="text-sm font-semibold text-emerald-600 mb-1">{state.courtName}</p>
         )}
@@ -184,8 +193,12 @@ export default function PaymentPage() {
           <Row label="Date" value={formattedDate} />
           <Row label="Time" value={`${state.startTime} – ${state.endTime}`} />
           <Row label="Duration" value={`${state.duration} hr${state.duration !== 1 ? 's' : ''}`} />
-          <div className="border-t border-slate-100 pt-3">
-            <Row label="Total Amount" value={`₹${state.amount}`} bold />
+          <div className="border-t border-slate-100 pt-3 space-y-1.5">
+            {isAdvanceOnly && <Row label="Total Booking" value={`₹${state.totalAmount}`} />}
+            <Row label={isAdvanceOnly ? 'Pay Now (Advance)' : 'Total Amount'} value={`₹${state.amount}`} bold />
+            {isAdvanceOnly && (
+              <p className="text-xs text-amber-600 mt-1">₹{balanceDue} remaining balance due at venue</p>
+            )}
           </div>
         </div>
 
@@ -218,7 +231,7 @@ export default function PaymentPage() {
               Processing...
             </span>
           ) : (
-            `Pay ₹${state.amount} via Razorpay`
+            `Pay ₹${state.amount}${isAdvanceOnly ? ' (Advance)' : ''} via Razorpay`
           )}
         </button>
 
