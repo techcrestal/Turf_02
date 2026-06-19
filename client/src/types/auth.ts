@@ -8,6 +8,8 @@ export interface ProfilePayload {
   age?: number;
   favorite_sports?: string[];
   skill_ids?: string[];
+  home_lat?: number | null;
+  home_lng?: number | null;
 }
 
 export interface CheckUserResponse {

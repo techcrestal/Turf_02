@@ -7,6 +7,7 @@ import { sportsApi } from '../../../api/endpoints/sports';
 import { ratingsApi } from '../../../api/endpoints/ratings';
 import { getSportEmoji } from '../../../utils/helpers';
 import StarPicker from '../../../components/ratings/StarPicker';
+import LocationPicker from '../../../components/map/LocationPicker';
 
 export default function ProfilePage() {
   const { user, logout, refreshUser } = useAuth();
@@ -22,6 +23,8 @@ export default function ProfilePage() {
     age: user?.age?.toString() ?? '',
     favorite_sports: user?.favorite_sports ?? [],
     skill_ids: user?.skill_ids ?? [],
+    home_lat: user?.home_lat ?? null as number | null,
+    home_lng: user?.home_lng ?? null as number | null,
   });
 
   const { data: sports = [] } = useQuery({
@@ -81,6 +84,8 @@ export default function ProfilePage() {
         age: form.age ? parseInt(form.age) : undefined,
         favorite_sports: form.favorite_sports,
         skill_ids: form.skill_ids,
+        home_lat: form.home_lat,
+        home_lng: form.home_lng,
       }),
     onSuccess: async () => {
       await refreshUser();
@@ -169,6 +174,20 @@ export default function ProfilePage() {
               </div>
             )}
 
+            {/* Home location */}
+            {user?.home_lat && user?.home_lng && (
+              <div className="bg-slate-50 rounded-xl p-3 flex items-center gap-2">
+                <span className="text-lg">📍</span>
+                <div>
+                  <p className="text-xs text-slate-500">Home Location</p>
+                  <p className="text-xs font-mono text-slate-600">
+                    {user.home_lat.toFixed(4)}, {user.home_lng.toFixed(4)}
+                  </p>
+                </div>
+                <span className="ml-auto text-xs text-emerald-600 font-medium">Saved</span>
+              </div>
+            )}
+
             {/* Player skill ratings */}
             {myRatings && myRatings.skills.length > 0 && (
               <div>
@@ -195,6 +214,8 @@ export default function ProfilePage() {
                   age: user?.age?.toString() ?? '',
                   favorite_sports: user?.favorite_sports ?? [],
                   skill_ids: user?.skill_ids ?? [],
+                  home_lat: user?.home_lat ?? null,
+                  home_lng: user?.home_lng ?? null,
                 });
                 setEditing(true);
               }}
@@ -305,6 +326,17 @@ export default function ProfilePage() {
                 })}
               </div>
             )}
+
+            {/* Home location picker */}
+            <div className="bg-slate-50 rounded-2xl p-4">
+              <LocationPicker
+                lat={form.home_lat}
+                lng={form.home_lng}
+                onChange={(lat, lng) => setForm((p) => ({ ...p, home_lat: lat, home_lng: lng }))}
+                label="Home Location"
+              />
+              <p className="text-xs text-slate-400 mt-2">Used to show nearby turfs and games</p>
+            </div>
 
             <div className="flex gap-3">
               <button

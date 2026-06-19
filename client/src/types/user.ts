@@ -16,4 +16,6 @@ export interface UserProfile {
   favorite_sports: string[];
   skill_ids: string[];
   role: 'customer' | 'owner' | 'admin';
+  home_lat: number | null;
+  home_lng: number | null;
 }

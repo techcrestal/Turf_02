@@ -13,4 +13,6 @@ export interface Turf {
   closing_time: string | null;
   contact_number: string | null;
   turf_email: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }

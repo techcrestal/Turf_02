@@ -14,6 +14,8 @@ export interface TurfPayload {
   closing_time?: string;
   capacity: number;
   is_public?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface OwnerTurf {
@@ -35,6 +37,8 @@ export interface OwnerTurf {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface BookingRecord {

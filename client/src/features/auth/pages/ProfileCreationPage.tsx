@@ -5,6 +5,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { sportsApi } from '../../../api/endpoints/sports';
 import { ratingsApi } from '../../../api/endpoints/ratings';
 import { getSportEmoji } from '../../../utils/helpers';
+import LocationPicker from '../../../components/map/LocationPicker';
 
 export default function ProfileCreationPage() {
   const { createProfile } = useAuth();
@@ -12,6 +13,8 @@ export default function ProfileCreationPage() {
   const [form, setForm] = useState({ name: '', email: '', username: '', age: '' });
   const [selectedSports, setSelectedSports] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [homeLat, setHomeLat] = useState<number | null>(null);
+  const [homeLng, setHomeLng] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -67,6 +70,8 @@ export default function ProfileCreationPage() {
         age: form.age ? parseInt(form.age) : undefined,
         favorite_sports: selectedSports,
         skill_ids: selectedSkills,
+        home_lat: homeLat,
+        home_lng: homeLng,
       });
       navigate('/home');
     } catch (err: any) {
@@ -195,6 +200,19 @@ export default function ProfileCreationPage() {
             })}
           </div>
         )}
+
+        {/* Home Location */}
+        <div className="bg-slate-50 rounded-2xl p-4">
+          <LocationPicker
+            lat={homeLat}
+            lng={homeLng}
+            onChange={(lat, lng) => { setHomeLat(lat); setHomeLng(lng); }}
+            label="Your Home Location (optional)"
+          />
+          <p className="text-xs text-slate-400 mt-2">
+            Helps us show you nearby turfs and games
+          </p>
+        </div>
 
         {error && (
           <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>

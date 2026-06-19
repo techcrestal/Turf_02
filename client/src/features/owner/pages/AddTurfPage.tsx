@@ -5,6 +5,7 @@ import { ownerTurfsApi } from '../../../api/endpoints/ownerTurfs';
 import { courtsApi, Court, TimeSlot } from '../../../api/endpoints/courts';
 import { sportsApi } from '../../../api/endpoints/sports';
 import { uploadTurfPhoto, deleteTurfPhoto } from '../../../lib/supabaseStorage';
+import LocationPicker from '../../../components/map/LocationPicker';
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const inputCls =
@@ -40,6 +41,8 @@ interface FormData {
   country: string;
   contact_number: string;
   turf_email: string;
+  latitude: number | null;
+  longitude: number | null;
   // Step 2
   opening_time: string;
   closing_time: string;
@@ -393,6 +396,8 @@ export default function AddTurfPage() {
     country: 'India',
     contact_number: '',
     turf_email: '',
+    latitude: null,
+    longitude: null,
     opening_time: '06:00',
     closing_time: '22:00',
     capacity: '22',
@@ -427,6 +432,7 @@ export default function AddTurfPage() {
       if (!form.address.trim()) errs.address = 'Address is required';
       if (!form.city.trim()) errs.city = 'City is required';
       if (!form.sport_id) errs.sport_id = 'Please select a sport';
+      if (!form.latitude || !form.longitude) errs.location = 'Please pin the turf location on the map';
     }
     if (s === 2) {
       if (!form.opening_time) errs.opening_time = 'Opening time is required';
@@ -546,6 +552,8 @@ export default function AddTurfPage() {
         closing_time: form.closing_time,
         capacity: Number(form.capacity),
         is_public: true,
+        latitude: form.latitude,
+        longitude: form.longitude,
       });
 
       const turfId = turf.id;
@@ -767,6 +775,18 @@ export default function AddTurfPage() {
                   className={inputCls}
                 />
               </div>
+
+              {/* Map location */}
+              <div>
+                <LocationPicker
+                  lat={form.latitude}
+                  lng={form.longitude}
+                  onChange={(lat, lng) => { set('latitude', lat as any); set('longitude', lng as any); }}
+                  label="Turf Location on Map"
+                  required
+                />
+                {errors.location && <p className={errCls}>{errors.location}</p>}
+              </div>
             </div>
           </div>
         )}
@@ -969,6 +989,9 @@ export default function AddTurfPage() {
               <Row label="Email" value={form.turf_email} />
               <Row label="Address" value={`${form.address}, ${form.city}${form.state ? ', ' + form.state : ''}, ${form.country}`} />
               <Row label="Sport" value={sports.find((s) => s.id === form.sport_id)?.name ?? '—'} />
+              {form.latitude && form.longitude && (
+                <Row label="Coordinates" value={`${form.latitude.toFixed(5)}, ${form.longitude.toFixed(5)}`} />
+              )}
               {form.description && <Row label="Description" value={form.description} />}
             </div>
 

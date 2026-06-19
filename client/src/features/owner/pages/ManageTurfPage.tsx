@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import LocationPicker from '../../../components/map/LocationPicker';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ownerTurfsApi, BookingRecord } from '../../../api/endpoints/ownerTurfs';
@@ -45,6 +46,8 @@ export default function ManageTurfPage() {
     country: string;
     capacity: string;
     is_public: boolean;
+    latitude: number | null;
+    longitude: number | null;
   } | null>(null);
 
   const { data: sports = [] } = useQuery({
@@ -143,6 +146,8 @@ export default function ManageTurfPage() {
       country: turf.country ?? 'India',
       capacity: String(turf.capacity),
       is_public: turf.is_public,
+      latitude: turf.latitude ?? null,
+      longitude: turf.longitude ?? null,
     });
     setEditErrors({});
     setEditOpen(true);
@@ -166,6 +171,8 @@ export default function ManageTurfPage() {
       country: editForm.country.trim() || 'India',
       capacity: Number(editForm.capacity),
       is_public: editForm.is_public,
+      latitude: editForm.latitude,
+      longitude: editForm.longitude,
     });
   };
 
@@ -361,6 +368,14 @@ export default function ManageTurfPage() {
                 >
                   <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${editForm.is_public ? 'right-0.5' : 'left-0.5'}`} />
                 </button>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-3">
+                <LocationPicker
+                  lat={editForm.latitude}
+                  lng={editForm.longitude}
+                  onChange={(lat, lng) => setEditForm((prev) => prev ? { ...prev, latitude: lat, longitude: lng } : prev)}
+                  label="Turf Location on Map"
+                />
               </div>
               {editErrors.submit && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-xl">{editErrors.submit}</p>}
               <div className="flex gap-3 pt-1">
