@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
 
       let query = supabase
         .from('bookings')
-        .select('start_time, end_time')
+        .select('id, start_time, end_time, game_type')
         .is('deleted_at', null)
         .neq('status', 'cancelled')
         .gte('start_time', start)
@@ -51,29 +51,30 @@ Deno.serve(async (req) => {
       const { data, error } = await query;
       if (error) throw error;
 
-      const bookedSlots = data ?? [];
+      const rawSlots = data ?? [];
 
-      // Group bookings by their UTC date string (YYYY-MM-DD).
-      // For IST (+5:30) with slots 06:00–22:00, the UTC date always matches
-      // the local date, so slicing the ISO timestamp is correct.
+      // Expose booking_id only for public slots so others can join
+      const bookedSlots = rawSlots.map((b) => ({
+        start_time: b.start_time,
+        end_time: b.end_time,
+        game_type: b.game_type ?? 'private',
+        ...(b.game_type === 'public' ? { booking_id: b.id } : {}),
+      }));
+
       const slotsByDate = new Map<string, { start_time: string; end_time: string }[]>();
-      for (const slot of bookedSlots) {
+      for (const slot of rawSlots) {
         const dateStr = slot.start_time.slice(0, 10);
         if (!slotsByDate.has(dateStr)) slotsByDate.set(dateStr, []);
         slotsByDate.get(dateStr)!.push(slot);
       }
 
-      // Determine the display month from the `end` param (more reliable than
-      // `start` when the client sends local-midnight which can be UTC prev-day).
       const endDate = new Date(end);
       const displayYear = endDate.getUTCFullYear();
       const displayMonth = endDate.getUTCMonth();
       const daysInMonth = new Date(Date.UTC(displayYear, displayMonth + 1, 0)).getUTCDate();
 
-      // 17 available hour-slots per day (06:00–22:00).
-      // 100% booked (17 hrs) → 'full'; ≥70% (≥11.9 hrs) → 'limited'; else → 'available'.
       const TOTAL_HOURS = 17;
-      const LIMITED_THRESHOLD = TOTAL_HOURS * 0.7; // 11.9 hrs
+      const LIMITED_THRESHOLD = TOTAL_HOURS * 0.7;
 
       const dayStatuses: { date: string; status: string }[] = [];
       for (let day = 1; day <= daysInMonth; day++) {
@@ -122,16 +123,41 @@ Deno.serve(async (req) => {
     // POST /bookings — create
     if (method === 'POST' && sub === '') {
       const body = await req.json();
-      const { turf_id, court_id, start_time, end_time, price } = body;
+      const { turf_id, court_id, start_time, end_time, price, game_type } = body;
       if (new Date(start_time) >= new Date(end_time)) return conflict('start_time must be before end_time');
       const { data: turf } = await supabase.from('turfs').select('id').eq('id', turf_id).single();
       if (!turf) return notFound('Turf not found');
+      const resolvedGameType = game_type === 'public' ? 'public' : 'private';
       const { data, error } = await supabase
         .from('bookings')
-        .insert({ user_id: auth.user.id, turf_id, court_id: court_id ?? null, start_time, end_time, price, status: 'confirmed', payment_status: 'pending' })
+        .insert({
+          user_id: auth.user.id,
+          turf_id,
+          court_id: court_id ?? null,
+          start_time,
+          end_time,
+          price,
+          status: 'confirmed',
+          payment_status: 'pending',
+          game_type: resolvedGameType,
+        })
         .select().single();
       if (error) throw error;
       return new Response(JSON.stringify(data), { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // POST /bookings/:id/join — join a public game
+    if (method === 'POST' && sub.endsWith('/join')) {
+      const bookingId = sub.replace('/join', '');
+      const { data: booking } = await supabase.from('bookings').select('*').eq('id', bookingId).single();
+      if (!booking || booking.deleted_at) return notFound('Booking not found');
+      if (booking.game_type !== 'public') return err('This booking is private', 403);
+      if (booking.user_id === auth.user.id) return err('Cannot join your own game', 400);
+      const { error } = await supabase
+        .from('booking_participants')
+        .upsert({ booking_id: bookingId, user_id: auth.user.id }, { onConflict: 'booking_id,user_id' });
+      if (error) throw error;
+      return ok({ message: 'Joined successfully' });
     }
 
     // PUT /bookings/:id/cancel
@@ -143,6 +169,21 @@ Deno.serve(async (req) => {
       if (booking.status === 'cancelled') return conflict('Already cancelled');
       const { data, error } = await supabase
         .from('bookings').update({ status: 'cancelled' }).eq('id', bookingId).select().single();
+      if (error) throw error;
+      return ok(data);
+    }
+
+    // PUT /bookings/:id/game-type — toggle private/public
+    if (method === 'PUT' && sub.endsWith('/game-type')) {
+      const bookingId = sub.replace('/game-type', '');
+      const { game_type } = await req.json();
+      if (!['private', 'public'].includes(game_type)) return err('Invalid game_type', 400);
+      const { data: booking } = await supabase.from('bookings').select('*').eq('id', bookingId).single();
+      if (!booking || booking.deleted_at) return notFound('Booking not found');
+      if (booking.user_id !== auth.user.id) return forbidden('Not authorized');
+      if (booking.status === 'cancelled') return conflict('Cannot update a cancelled booking');
+      const { data, error } = await supabase
+        .from('bookings').update({ game_type }).eq('id', bookingId).select().single();
       if (error) throw error;
       return ok(data);
     }

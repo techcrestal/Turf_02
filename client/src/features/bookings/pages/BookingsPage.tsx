@@ -3,17 +3,19 @@ import { bookingsApi } from '../../../api/endpoints/bookings';
 import { turfsApi } from '../../../api/endpoints/turfs';
 import { formatDate, formatTime } from '../../../utils/helpers';
 import { useState } from 'react';
+import { GameType } from '../../../types/booking';
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
   confirmed: 'bg-emerald-100 text-emerald-700',
   cancelled: 'bg-red-100 text-red-700',
-  completed: 'bg-blue-100 text-blue-700',
+  completed: 'bg-slate-100 text-slate-600',
 };
 
 export default function BookingsPage() {
   const queryClient = useQueryClient();
   const [toast, setToast] = useState('');
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const { data: bookings = [], isLoading } = useQuery({
     queryKey: ['bookings'],
@@ -27,23 +29,44 @@ export default function BookingsPage() {
 
   const turfMap = Object.fromEntries(turfs.map((t) => [t.id, t]));
 
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
   const cancelMutation = useMutation({
     mutationFn: (bookingId: string) => bookingsApi.cancelBooking(bookingId),
     onSuccess: () => {
-      setToast('Booking cancelled');
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      setTimeout(() => setToast(''), 3000);
+      showToast('Booking cancelled');
+    },
+    onError: () => showToast('Failed to cancel booking'),
+  });
+
+  const gameTypeMutation = useMutation({
+    mutationFn: ({ id, gameType }: { id: string; gameType: GameType }) =>
+      bookingsApi.updateGameType(id, gameType),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      setTogglingId(null);
+      showToast('Game type updated');
     },
     onError: () => {
-      setToast('Failed to cancel booking');
-      setTimeout(() => setToast(''), 3000);
+      setTogglingId(null);
+      showToast('Failed to update game type');
     },
   });
+
+  const handleGameTypeToggle = (bookingId: string, current: GameType) => {
+    const next: GameType = current === 'private' ? 'public' : 'private';
+    setTogglingId(bookingId);
+    gameTypeMutation.mutate({ id: bookingId, gameType: next });
+  };
 
   return (
     <div className="min-h-screen bg-white">
       {toast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-xl text-sm shadow-lg">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-xl text-sm shadow-lg whitespace-nowrap">
           {toast}
         </div>
       )}
@@ -71,8 +94,17 @@ export default function BookingsPage() {
           {bookings.map((booking) => {
             const turf = turfMap[booking.turf_id];
             const canCancel = booking.status === 'pending' || booking.status === 'confirmed';
+            const canToggleGameType = booking.status !== 'cancelled';
+            const isPublic = booking.game_type === 'public';
+            const isToggling = togglingId === booking.id;
+
             return (
-              <div key={booking.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
+              <div
+                key={booking.id}
+                className={`bg-white border rounded-2xl p-4 shadow-sm transition-colors ${
+                  isPublic ? 'border-blue-200' : 'border-slate-100'
+                }`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-bold text-slate-800 truncate">
@@ -103,6 +135,33 @@ export default function BookingsPage() {
                       </button>
                     )}
                   </div>
+                </div>
+
+                {/* Game type row */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      isPublic ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {isPublic ? '👥 Public' : '🔒 Private'}
+                    </span>
+                    {isPublic && (
+                      <span className="text-xs text-blue-500">Open for others to join</span>
+                    )}
+                  </div>
+                  {canToggleGameType && (
+                    <button
+                      onClick={() => handleGameTypeToggle(booking.id, booking.game_type ?? 'private')}
+                      disabled={isToggling}
+                      className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+                        isPublic
+                          ? 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                          : 'border-blue-200 text-blue-600 hover:bg-blue-50'
+                      }`}
+                    >
+                      {isToggling ? '...' : isPublic ? 'Make Private' : 'Make Public'}
+                    </button>
+                  )}
                 </div>
               </div>
             );

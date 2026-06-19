@@ -1,3 +1,5 @@
+export type GameType = 'private' | 'public';
+
 export interface Booking {
   id: string;
   turf_id: string;
@@ -6,6 +8,7 @@ export interface Booking {
   end_time: string;
   status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
   price: number;
+  game_type: GameType;
 }
 
 export interface BookingCreatePayload {
@@ -14,4 +17,5 @@ export interface BookingCreatePayload {
   start_time: string;
   end_time: string;
   price: number;
+  game_type?: GameType;
 }

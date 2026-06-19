@@ -6,12 +6,43 @@ import { courtsApi, Court } from '../../../api/endpoints/courts';
 import { bookingsApi, BookedSlot, DayAvailability } from '../../../api/endpoints/bookings';
 import { sportsApi } from '../../../api/endpoints/sports';
 import { getSportEmoji, turfGradient } from '../../../utils/helpers';
+import { GameType } from '../../../types/booking';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-const HOUR_SLOTS: string[] = Array.from({ length: 17 }, (_, i) =>
-  `${String(i + 6).padStart(2, '0')}:00`
-);
+// ── Slot helpers ─────────────────────────────────────────────────────────────
+
+interface CourtSlot {
+  start: string;      // "09:00"
+  end: string;        // "10:00"
+  price: number;
+  durationMin: number;
+}
+
+function minsToStr(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+function strToMins(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+/** Expand court_time_slots for a given day-of-week into individual bookable slots */
+function getCourtSlots(courtTimeSlots: import('../../../api/endpoints/courts').TimeSlot[], dayOfWeek: number): CourtSlot[] {
+  const result: CourtSlot[] = [];
+  for (const ts of (courtTimeSlots ?? []).filter(s => s.day_of_week === dayOfWeek)) {
+    const startMin = strToMins(ts.start_time);
+    const endMin = strToMins(ts.end_time);
+    const dur = ts.slot_duration_minutes ?? 60;
+    for (let cur = startMin; cur + dur <= endMin; cur += dur) {
+      result.push({ start: minsToStr(cur), end: minsToStr(cur + dur), price: Number(ts.price_per_slot), durationMin: dur });
+    }
+  }
+  return result.sort((a, b) => a.start.localeCompare(b.start));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function toISO(date: string, time: string): string {
   return new Date(`${date}T${time}:00`).toISOString();
@@ -168,77 +199,72 @@ function CalendarPicker({
 
 function SlotGrid({
   date,
+  courtSlots,
   startTime,
   endTime,
   bookedSlots,
   onStartChange,
   onEndChange,
+  onPublicSlotClick,
 }: {
   date: string;
+  courtSlots: CourtSlot[];
   startTime: string;
   endTime: string;
   bookedSlots: BookedSlot[];
   onStartChange: (t: string) => void;
   onEndChange: (t: string) => void;
+  onPublicSlotClick?: (start: string, end: string, bookingId: string) => void;
 }) {
-  const isSlotBooked = (slotHour: string): boolean => {
-    const slotStart = new Date(`${date}T${slotHour}:00`).getTime();
-    const slotEnd = slotStart + 60 * 60 * 1000;
-    return bookedSlots.some((b) => {
+  const getSlotBooking = (slot: CourtSlot): { booked: boolean; isPublic: boolean; bookingId?: string } => {
+    const slotStart = new Date(`${date}T${slot.start}:00`).getTime();
+    const slotEnd = new Date(`${date}T${slot.end}:00`).getTime();
+    for (const b of bookedSlots) {
       const bStart = new Date(b.start_time).getTime();
       const bEnd = new Date(b.end_time).getTime();
-      return slotStart < bEnd && slotEnd > bStart;
-    });
+      if (slotStart < bEnd && slotEnd > bStart) {
+        return { booked: true, isPublic: b.game_type === 'public', bookingId: b.booking_id };
+      }
+    }
+    return { booked: false, isPublic: false };
   };
 
-  const startHour = startTime ? parseInt(startTime) : -1;
-  const endHour = endTime ? parseInt(endTime) : -1;
+  const isSelected = (slot: CourtSlot): boolean =>
+    !!startTime && !!endTime && slot.start >= startTime && slot.end <= endTime;
 
-  const isInRange = (slotHour: string): boolean => {
-    if (!startTime || !endTime) return false;
-    const h = parseInt(slotHour);
-    return h >= startHour && h < endHour;
-  };
+  const handleClick = (slot: CourtSlot) => {
+    const { booked, isPublic, bookingId } = getSlotBooking(slot);
 
-  const handleClick = (slotHour: string) => {
-    if (isSlotBooked(slotHour)) return;
-    const h = parseInt(slotHour);
-    const nextHour = `${String(h + 1).padStart(2, '0')}:00`;
-
-    // Tap the already-selected single slot → deselect
-    if (startTime === slotHour && endTime === nextHour) {
-      onStartChange('');
-      onEndChange('');
-      return;
-    }
-
-    // No selection yet, or tapping at/before current start → fresh 1-hour pick
-    if (!startTime || h <= startHour) {
-      onStartChange(slotHour);
-      onEndChange(nextHour);
-      return;
-    }
-
-    // Tapping after current end → extend if every slot in between is free
-    const currentEndHour = endTime ? parseInt(endTime) : -1;
-    if (h >= currentEndHour) {
-      const allClear = HOUR_SLOTS
-        .filter((s) => parseInt(s) >= currentEndHour && parseInt(s) <= h)
-        .every((s) => !isSlotBooked(s));
-      if (allClear) {
-        onEndChange(nextHour);
-      } else {
-        // Blocked path → reset to this slot only
-        onStartChange(slotHour);
-        onEndChange(nextHour);
+    if (booked) {
+      if (isPublic && bookingId && onPublicSlotClick) {
+        onPublicSlotClick(slot.start, slot.end, bookingId);
       }
       return;
     }
 
-    // Tapping within current range → shrink/reset to this slot
-    onStartChange(slotHour);
-    onEndChange(nextHour);
+    if (startTime === slot.start && endTime === slot.end) {
+      onStartChange(''); onEndChange(''); return;
+    }
+
+    if (!startTime || slot.start <= startTime) {
+      onStartChange(slot.start); onEndChange(slot.end); return;
+    }
+
+    if (slot.start >= endTime) {
+      const blocked = courtSlots
+        .filter(s => s.start >= endTime && s.start <= slot.start)
+        .some(s => getSlotBooking(s).booked);
+      if (blocked) { onStartChange(slot.start); onEndChange(slot.end); }
+      else { onEndChange(slot.end); }
+      return;
+    }
+
+    onStartChange(slot.start); onEndChange(slot.end);
   };
+
+  if (courtSlots.length === 0) {
+    return <p className="text-slate-400 text-sm text-center py-4">No slots configured for this day.</p>;
+  }
 
   return (
     <div>
@@ -248,8 +274,12 @@ function SlotGrid({
           <span className="text-xs text-slate-500">Selected</span>
         </div>
         <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm bg-blue-100 border border-blue-200" />
+          <span className="text-xs text-slate-500">Public</span>
+        </div>
+        <div className="flex items-center gap-1.5">
           <div className="w-3 h-3 rounded-sm bg-red-100 border border-red-200" />
-          <span className="text-xs text-slate-500">Booked</span>
+          <span className="text-xs text-slate-500">Private</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-3 h-3 rounded-sm bg-slate-100 border border-slate-200" />
@@ -257,24 +287,24 @@ function SlotGrid({
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
-        {HOUR_SLOTS.map((slot) => {
-          const booked = isSlotBooked(slot);
-          const inRange = isInRange(slot);
-
-          let cls = 'py-2.5 rounded-xl text-xs font-semibold transition-all flex flex-col items-center gap-0.5 ';
-          if (booked) {
-            cls += 'bg-red-50 text-red-400 cursor-not-allowed border border-red-100';
-          } else if (inRange) {
-            cls += 'bg-emerald-500 text-white shadow-sm border border-emerald-600';
-          } else {
-            cls += 'bg-slate-50 text-slate-700 border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 cursor-pointer';
-          }
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+        {courtSlots.map((slot) => {
+          const { booked, isPublic } = getSlotBooking(slot);
+          const sel = isSelected(slot);
+          let cls = 'py-2.5 px-1 rounded-xl text-xs font-semibold transition-all flex flex-col items-center gap-0.5 ';
+          if (booked && isPublic) cls += 'bg-blue-50 text-blue-600 cursor-pointer border border-blue-200 hover:bg-blue-100';
+          else if (booked)        cls += 'bg-red-50 text-red-400 cursor-not-allowed border border-red-100';
+          else if (sel)           cls += 'bg-emerald-500 text-white shadow-sm border border-emerald-600';
+          else                    cls += 'bg-slate-50 text-slate-700 border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 cursor-pointer';
 
           return (
-            <button key={slot} disabled={booked} onClick={() => handleClick(slot)} className={cls}>
-              {booked ? <span className="text-red-300">🔒</span> : null}
-              <span>{slot}</span>
+            <button key={slot.start} onClick={() => handleClick(slot)} className={cls}>
+              {booked && isPublic  && <span className="text-blue-400 text-[10px] leading-none">👥</span>}
+              {booked && !isPublic && <span className="text-red-300">🔒</span>}
+              <span>{slot.start}</span>
+              <span className="text-[10px] opacity-70">{slot.end}</span>
+              {!booked && <span className="text-[10px] opacity-60">₹{slot.price}</span>}
+              {booked && isPublic && <span className="text-[9px] text-blue-500 leading-none">Join</span>}
             </button>
           );
         })}
@@ -284,15 +314,17 @@ function SlotGrid({
         {startTime && endTime ? (
           <p className="text-xs text-emerald-700 font-semibold">
             ✓ {startTime} – {endTime} · {getDuration(startTime, endTime)} hr
-            {getDuration(startTime, endTime) !== 1 ? 's' : ''} · tap another slot to extend
+            {getDuration(startTime, endTime) !== 1 ? 's' : ''} · tap another to extend
           </p>
         ) : (
-          <p className="text-xs text-slate-400">Tap a slot to select it</p>
+          <p className="text-xs text-slate-400">Tap a slot to select it · Blue slots are open public games</p>
         )}
       </div>
     </div>
   );
 }
+
+interface JoiningSlot { start: string; end: string; bookingId: string; }
 
 export default function BookingFlowPage() {
   const { turfId } = useParams<{ turfId: string }>();
@@ -306,6 +338,9 @@ export default function BookingFlowPage() {
   const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
   const [activePhoto, setActivePhoto] = useState(0);
   const [error, setError] = useState('');
+  const [gameType, setGameType] = useState<GameType>('private');
+  const [joiningSlot, setJoiningSlot] = useState<JoiningSlot | null>(null);
+  const [toast, setToast] = useState('');
 
   const nowDate = new Date();
   const [calYear, setCalYear] = useState(() => nowDate.getFullYear());
@@ -373,33 +408,19 @@ export default function BookingFlowPage() {
   const sport = sports.find((s) => s.id === turf?.sport_id);
   const duration = startTime && endTime ? getDuration(startTime, endTime) : 0;
 
-  const calcPrice = (): number => {
-    if (!selectedCourt || !date || !startTime || !endTime) return 0;
-    const dayOfWeek = new Date(date + 'T12:00:00').getDay();
-    const daySlots = (selectedCourt.court_time_slots ?? []).filter(
-      (s) => s.day_of_week === dayOfWeek,
-    );
-    if (daySlots.length === 0) return 0;
-    const startH = parseInt(startTime);
-    const endH = parseInt(endTime);
-    let total = 0;
-    for (let h = startH; h < endH; h++) {
-      const hourStr = `${String(h).padStart(2, '0')}:00`;
-      // Find which slot covers this hour (slot.start_time ≤ hour < slot.end_time)
-      const slot = daySlots.find((s) => {
-        const ss = s.start_time.slice(0, 5);
-        const se = s.end_time.slice(0, 5);
-        return hourStr >= ss && hourStr < se;
-      });
-      if (slot) {
-        const slotHours = parseInt(slot.end_time) - parseInt(slot.start_time) || 1;
-        total += Number(slot.price_per_slot) / slotHours;
-      }
-    }
-    return Math.round(total);
-  };
+  const dayOfWeek = new Date(date + 'T12:00:00').getDay();
 
-  const totalPrice = calcPrice();
+  const courtSlots = useMemo(
+    () => getCourtSlots(selectedCourt?.court_time_slots ?? [], dayOfWeek),
+    [selectedCourt, dayOfWeek],
+  );
+
+  const totalPrice = useMemo(() => {
+    if (!startTime || !endTime) return 0;
+    return courtSlots
+      .filter(s => s.start >= startTime && s.end <= endTime)
+      .reduce((sum, s) => sum + s.price, 0);
+  }, [courtSlots, startTime, endTime]);
   const needsCourt = courts.length > 0;
   const canBook = date !== '' && startTime !== '' && endTime !== '' && (!needsCourt || selectedCourt !== null);
 
@@ -419,6 +440,7 @@ export default function BookingFlowPage() {
         start_time: toISO(date, startTime),
         end_time: toISO(date, endTime),
         price: totalPrice,
+        game_type: gameType,
       });
     },
     onSuccess: (booking) => {
@@ -434,6 +456,7 @@ export default function BookingFlowPage() {
           startTime,
           endTime,
           duration,
+          gameType,
         },
       });
     },
@@ -447,8 +470,26 @@ export default function BookingFlowPage() {
     },
   });
 
+  const joinMutation = useMutation({
+    mutationFn: (bookingId: string) => bookingsApi.joinBooking(bookingId),
+    onSuccess: () => {
+      setJoiningSlot(null);
+      setToast('You have joined the game!');
+      setTimeout(() => setToast(''), 3000);
+    },
+    onError: (err: any) => {
+      setToast(err?.response?.data?.error?.message ?? err?.response?.data?.message ?? 'Failed to join. Try again.');
+      setTimeout(() => setToast(''), 3000);
+    },
+  });
+
   return (
     <div className="min-h-screen bg-slate-50">
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-xl text-sm shadow-lg whitespace-nowrap">
+          {toast}
+        </div>
+      )}
       {/* Header */}
       <div className="relative bg-black">
         {photos.length > 0 ? (
@@ -585,13 +626,86 @@ export default function BookingFlowPage() {
             <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
               <SlotGrid
                 date={date}
+                courtSlots={courtSlots}
                 startTime={startTime}
                 endTime={endTime}
                 bookedSlots={dayBookedSlots}
-                onStartChange={setStartTime}
-                onEndChange={setEndTime}
+                onStartChange={(t) => { setStartTime(t); setJoiningSlot(null); }}
+                onEndChange={(t) => { setEndTime(t); setJoiningSlot(null); }}
+                onPublicSlotClick={(s, e, id) => {
+                  setStartTime(''); setEndTime('');
+                  setJoiningSlot({ start: s, end: e, bookingId: id });
+                }}
               />
             </div>
+          </section>
+        )}
+
+        {/* Join Game Panel — shown when user taps a public slot */}
+        {joiningSlot && (
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">👥</span>
+              <div className="flex-1">
+                <p className="font-bold text-blue-900 text-sm">Public Game Available</p>
+                <p className="text-blue-700 text-sm">{joiningSlot.start} – {joiningSlot.end}</p>
+                <p className="text-blue-600 text-xs mt-1">
+                  Someone has opened this slot for others to join. Tap below to request to join their game.
+                </p>
+              </div>
+              <button
+                onClick={() => setJoiningSlot(null)}
+                className="text-blue-400 hover:text-blue-600 text-lg leading-none mt-0.5"
+              >
+                ✕
+              </button>
+            </div>
+            <button
+              onClick={() => joinMutation.mutate(joiningSlot.bookingId)}
+              disabled={joinMutation.isPending}
+              className="mt-3 w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl text-sm transition-colors"
+            >
+              {joinMutation.isPending ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Joining...
+                </span>
+              ) : '👥 Join This Game'}
+            </button>
+          </div>
+        )}
+
+        {/* Section 4: Game Type — shown after a slot is selected */}
+        {startTime && endTime && !joiningSlot && (
+          <section>
+            <h2 className="text-base font-bold text-slate-800 mb-3">Game Type</h2>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setGameType('private')}
+                className={`flex-1 py-3 rounded-2xl border-2 text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                  gameType === 'private'
+                    ? 'border-slate-700 bg-slate-700 text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'
+                }`}
+              >
+                🔒 Private
+              </button>
+              <button
+                onClick={() => setGameType('public')}
+                className={`flex-1 py-3 rounded-2xl border-2 text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                  gameType === 'public'
+                    ? 'border-blue-500 bg-blue-500 text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-blue-400'
+                }`}
+              >
+                👥 Public
+              </button>
+            </div>
+            {gameType === 'public' && (
+              <p className="text-xs text-blue-600 mt-2 flex items-center gap-1.5">
+                ℹ️ Other players will see this slot and can request to join your game
+              </p>
+            )}
           </section>
         )}
 

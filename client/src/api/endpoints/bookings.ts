@@ -1,9 +1,11 @@
 import { apiClient } from '../client';
-import { Booking, BookingCreatePayload } from '../../types/booking';
+import { Booking, BookingCreatePayload, GameType } from '../../types/booking';
 
 export interface BookedSlot {
   start_time: string;
   end_time: string;
+  game_type: GameType;
+  booking_id?: string; // present only for public slots
 }
 
 export interface DayAvailability {
@@ -27,6 +29,13 @@ export const bookingsApi = {
   },
   cancelBooking: async (bookingId: string): Promise<void> => {
     await apiClient.put(`/bookings/${bookingId}/cancel`);
+  },
+  updateGameType: async (bookingId: string, gameType: GameType): Promise<Booking> => {
+    const response = await apiClient.put(`/bookings/${bookingId}/game-type`, { game_type: gameType });
+    return response.data;
+  },
+  joinBooking: async (bookingId: string): Promise<void> => {
+    await apiClient.post(`/bookings/${bookingId}/join`);
   },
   getAvailability: async (
     turfId: string,
