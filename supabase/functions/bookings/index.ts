@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
     const auth = await authenticate(req);
     if (!auth) return unauthorized();
 
-    // GET /bookings — list user's bookings
+    // GET /bookings — list user's own bookings (hosting)
     if (method === 'GET' && sub === '') {
       const { data, error } = await supabase
         .from('bookings').select('*')
@@ -52,8 +52,6 @@ Deno.serve(async (req) => {
       if (error) throw error;
 
       const rawSlots = data ?? [];
-
-      // Expose booking_id only for public slots so others can join
       const bookedSlots = rawSlots.map((b) => ({
         start_time: b.start_time,
         end_time: b.end_time,
@@ -80,23 +78,107 @@ Deno.serve(async (req) => {
       for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${displayYear}-${String(displayMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const daySlots = slotsByDate.get(dateStr) ?? [];
-
         let status = 'available';
         if (daySlots.length > 0) {
           const bookedHours = daySlots.reduce((sum, b) => {
             return sum + (new Date(b.end_time).getTime() - new Date(b.start_time).getTime());
           }, 0) / 3_600_000;
-          if (bookedHours >= TOTAL_HOURS) {
-            status = 'full';
-          } else if (bookedHours >= LIMITED_THRESHOLD) {
-            status = 'limited';
-          }
+          if (bookedHours >= TOTAL_HOURS) status = 'full';
+          else if (bookedHours >= LIMITED_THRESHOLD) status = 'limited';
         }
-
         dayStatuses.push({ date: dateStr, status });
       }
 
       return ok({ booked_slots: bookedSlots, day_statuses: dayStatuses });
+    }
+
+    // GET /bookings/joined — games I've been approved to join
+    if (method === 'GET' && sub === 'joined') {
+      const { data: participations, error: pErr } = await supabase
+        .from('booking_participants')
+        .select('booking_id, joined_at, status')
+        .eq('user_id', auth.user.id)
+        .eq('status', 'approved');
+      if (pErr) throw pErr;
+      if (!participations?.length) return ok([]);
+      const ids = participations.map((p) => p.booking_id);
+      const { data: bookings, error: bErr } = await supabase
+        .from('bookings').select('*').in('id', ids).is('deleted_at', null).neq('status', 'cancelled')
+        .order('start_time', { ascending: false });
+      if (bErr) throw bErr;
+      const joinMap = Object.fromEntries(participations.map((p) => [p.booking_id, p.joined_at]));
+      return ok((bookings ?? []).map((b) => ({ ...b, joined_at: joinMap[b.id] })));
+    }
+
+    // GET /bookings/pending-joins — games I've requested to join, awaiting approval
+    if (method === 'GET' && sub === 'pending-joins') {
+      const { data: participations, error: pErr } = await supabase
+        .from('booking_participants')
+        .select('booking_id, joined_at')
+        .eq('user_id', auth.user.id)
+        .eq('status', 'pending');
+      if (pErr) throw pErr;
+      if (!participations?.length) return ok([]);
+      const ids = participations.map((p) => p.booking_id);
+      const { data: bookings, error: bErr } = await supabase
+        .from('bookings').select('*').in('id', ids).is('deleted_at', null).neq('status', 'cancelled')
+        .order('start_time', { ascending: false });
+      if (bErr) throw bErr;
+      const joinMap = Object.fromEntries(participations.map((p) => [p.booking_id, p.joined_at]));
+      return ok((bookings ?? []).map((b) => ({ ...b, join_status: 'pending', joined_at: joinMap[b.id] })));
+    }
+
+    // GET /bookings/join-requests — pending join requests for my hosted public games
+    if (method === 'GET' && sub === 'join-requests') {
+      const { data: myBookings, error: bErr } = await supabase
+        .from('bookings').select('id, start_time, end_time, turf_id, court_id')
+        .eq('user_id', auth.user.id).eq('game_type', 'public')
+        .neq('status', 'cancelled').is('deleted_at', null);
+      if (bErr) throw bErr;
+      if (!myBookings?.length) return ok([]);
+
+      const ids = myBookings.map((b) => b.id);
+      const { data: requests, error: rErr } = await supabase
+        .from('booking_participants')
+        .select('booking_id, user_id, joined_at, status')
+        .in('booking_id', ids).eq('status', 'pending');
+      if (rErr) throw rErr;
+      if (!requests?.length) return ok([]);
+
+      const userIds = [...new Set(requests.map((r) => r.user_id))];
+      const { data: users } = await supabase
+        .from('users').select('id, name, phone_number').in('id', userIds);
+      const userMap = Object.fromEntries((users ?? []).map((u) => [u.id, u]));
+      const bookingMap = Object.fromEntries(myBookings.map((b) => [b.id, b]));
+
+      return ok(requests.map((r) => ({
+        booking_id: r.booking_id,
+        user_id: r.user_id,
+        requested_at: r.joined_at,
+        requester: userMap[r.user_id] ?? { id: r.user_id, name: 'Player', phone_number: '' },
+        booking: bookingMap[r.booking_id],
+      })));
+    }
+
+    // GET /bookings/public — all upcoming public games with my join status
+    if (method === 'GET' && sub === 'public') {
+      const { data, error } = await supabase
+        .from('bookings').select('*')
+        .eq('game_type', 'public').neq('status', 'cancelled')
+        .is('deleted_at', null).gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true });
+      if (error) throw error;
+      const bookingIds = (data ?? []).map((b) => b.id);
+      const { data: myJoins } = bookingIds.length
+        ? await supabase.from('booking_participants').select('booking_id, status')
+            .eq('user_id', auth.user.id).in('booking_id', bookingIds)
+        : { data: [] };
+      const joinMap = Object.fromEntries((myJoins ?? []).map((p) => [p.booking_id, p.status]));
+      return ok((data ?? []).map((b) => ({
+        ...b,
+        is_mine: b.user_id === auth.user.id,
+        join_status: b.user_id === auth.user.id ? 'host' : (joinMap[b.id] ?? 'none'),
+      })));
     }
 
     // GET /bookings/turf/:turfId — owner view
@@ -130,34 +212,95 @@ Deno.serve(async (req) => {
       const resolvedGameType = game_type === 'public' ? 'public' : 'private';
       const { data, error } = await supabase
         .from('bookings')
-        .insert({
-          user_id: auth.user.id,
-          turf_id,
-          court_id: court_id ?? null,
-          start_time,
-          end_time,
-          price,
-          status: 'confirmed',
-          payment_status: 'pending',
-          game_type: resolvedGameType,
-        })
+        .insert({ user_id: auth.user.id, turf_id, court_id: court_id ?? null, start_time, end_time, price, status: 'confirmed', payment_status: 'pending', game_type: resolvedGameType })
         .select().single();
       if (error) throw error;
       return new Response(JSON.stringify(data), { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // POST /bookings/:id/join — join a public game
+    // POST /bookings/:id/join — request to join a public game
     if (method === 'POST' && sub.endsWith('/join')) {
       const bookingId = sub.replace('/join', '');
       const { data: booking } = await supabase.from('bookings').select('*').eq('id', bookingId).single();
       if (!booking || booking.deleted_at) return notFound('Booking not found');
       if (booking.game_type !== 'public') return err('This booking is private', 403);
       if (booking.user_id === auth.user.id) return err('Cannot join your own game', 400);
-      const { error } = await supabase
-        .from('booking_participants')
-        .upsert({ booking_id: bookingId, user_id: auth.user.id }, { onConflict: 'booking_id,user_id' });
+      // Check existing status
+      const { data: existing } = await supabase.from('booking_participants')
+        .select('status').eq('booking_id', bookingId).eq('user_id', auth.user.id).maybeSingle();
+      if (existing?.status === 'approved') return ok({ message: 'Already approved' });
+      if (existing?.status === 'pending') return ok({ message: 'Request already pending' });
+      const { error } = await supabase.from('booking_participants')
+        .upsert({ booking_id: bookingId, user_id: auth.user.id, status: 'pending', joined_at: new Date().toISOString() }, { onConflict: 'booking_id,user_id' });
       if (error) throw error;
-      return ok({ message: 'Joined successfully' });
+      // Notify game owner about the new join request
+      const { data: requester } = await supabase.from('users').select('name').eq('id', auth.user.id).single();
+      const jBookingDate = booking.start_time.replace('T', ' ').slice(0, 16);
+      const jExpiresAt = new Date(new Date(booking.end_time).getTime() + 86400000).toISOString();
+      await supabase.from('notifications').insert({
+        user_id: booking.user_id, type: 'join_request', title: 'New Join Request',
+        body: `${requester?.name ?? 'Someone'} wants to join your game on ${jBookingDate}`,
+        payload: { booking_id: bookingId, requester_id: auth.user.id },
+        expires_at: jExpiresAt,
+      });
+      return ok({ message: 'Join request sent — awaiting approval' });
+    }
+
+    // DELETE /bookings/:id/join — withdraw join request or leave game
+    if (method === 'DELETE' && sub.endsWith('/join')) {
+      const bookingId = sub.replace('/join', '');
+      const { error } = await supabase.from('booking_participants')
+        .delete().eq('booking_id', bookingId).eq('user_id', auth.user.id);
+      if (error) throw error;
+      return ok({ message: 'Left game' });
+    }
+
+    // PUT /bookings/:id/join-requests/approve — owner approves a request
+    if (method === 'PUT' && sub.endsWith('/join-requests/approve')) {
+      const bookingId = sub.split('/')[0];
+      const { user_id } = await req.json();
+      if (!user_id) return err('user_id required', 400);
+      const { data: booking } = await supabase.from('bookings').select('user_id, start_time, end_time').eq('id', bookingId).single();
+      if (!booking) return notFound('Booking not found');
+      if (booking.user_id !== auth.user.id) return forbidden('Not authorized');
+      const { error } = await supabase.from('booking_participants')
+        .update({ status: 'approved', responded_at: new Date().toISOString() })
+        .eq('booking_id', bookingId).eq('user_id', user_id);
+      if (error) throw error;
+      // Notify requester that their join was approved
+      const aBookingDate = booking.start_time.replace('T', ' ').slice(0, 16);
+      const aExpiresAt = new Date(new Date(booking.end_time).getTime() + 86400000).toISOString();
+      await supabase.from('notifications').insert({
+        user_id, type: 'join_approved', title: 'Join Request Approved',
+        body: `Your request to join the game on ${aBookingDate} has been approved!`,
+        payload: { booking_id: bookingId },
+        expires_at: aExpiresAt,
+      });
+      return ok({ message: 'Approved' });
+    }
+
+    // PUT /bookings/:id/join-requests/reject — owner rejects a request
+    if (method === 'PUT' && sub.endsWith('/join-requests/reject')) {
+      const bookingId = sub.split('/')[0];
+      const { user_id } = await req.json();
+      if (!user_id) return err('user_id required', 400);
+      const { data: booking } = await supabase.from('bookings').select('user_id, start_time, end_time').eq('id', bookingId).single();
+      if (!booking) return notFound('Booking not found');
+      if (booking.user_id !== auth.user.id) return forbidden('Not authorized');
+      const { error } = await supabase.from('booking_participants')
+        .update({ status: 'rejected', responded_at: new Date().toISOString() })
+        .eq('booking_id', bookingId).eq('user_id', user_id);
+      if (error) throw error;
+      // Notify requester that their join was rejected
+      const rBookingDate = booking.start_time.replace('T', ' ').slice(0, 16);
+      const rExpiresAt = new Date(new Date(booking.end_time).getTime() + 86400000).toISOString();
+      await supabase.from('notifications').insert({
+        user_id, type: 'join_rejected', title: 'Join Request Not Approved',
+        body: `Your request to join the game on ${rBookingDate} was not approved.`,
+        payload: { booking_id: bookingId },
+        expires_at: rExpiresAt,
+      });
+      return ok({ message: 'Rejected' });
     }
 
     // PUT /bookings/:id/cancel

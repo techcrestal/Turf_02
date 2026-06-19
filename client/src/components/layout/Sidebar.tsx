@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { notificationsApi } from '../../api/endpoints/notifications';
 import { useAuth } from '../../context/AuthContext';
+import { useQueryClient } from '@tanstack/react-query';
 
 const navItems = [
   { to: '/home',          emoji: '🏠', label: 'Home' },
@@ -15,7 +16,14 @@ const navItems = [
 
 export default function Sidebar() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const queryClient = useQueryClient();
+
+  const handleLogout = async () => {
+    queryClient.clear();
+    await logout();
+    navigate('/login', { replace: true });
+  };
 
   const { data: notifications = [] } = useQuery({
     queryKey: ['notifications'],
@@ -86,8 +94,8 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* User card */}
-      <div className="px-4 pb-5">
+      {/* User card + logout */}
+      <div className="px-4 pb-5 space-y-2">
         <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 rounded-xl">
           <div className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
             {initials}
@@ -97,6 +105,13 @@ export default function Sidebar() {
             <p className="text-xs text-slate-400 truncate">{user?.phone_number}</p>
           </div>
         </div>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-all"
+        >
+          <span className="text-base w-5 text-center">🚪</span>
+          <span>Logout</span>
+        </button>
       </div>
     </aside>
   );

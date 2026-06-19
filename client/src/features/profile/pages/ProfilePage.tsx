@@ -11,6 +11,7 @@ export default function ProfilePage() {
   const { user, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
   const [editing, setEditing] = useState(false);
   const [toast, setToast] = useState('');
   const [form, setForm] = useState({
@@ -57,6 +58,7 @@ export default function ProfilePage() {
   });
 
   const handleLogout = async () => {
+    queryClient.clear();
     await logout();
     navigate('/login', { replace: true });
   };

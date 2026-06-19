@@ -16,8 +16,15 @@ Deno.serve(async (req) => {
     const auth = await authenticate(req);
     if (!auth) return unauthorized();
 
-    // GET /notifications
+    // GET /notifications — lazy-clean expired entries first
     if (method === 'GET' && sub === '') {
+      // Soft-delete notifications that expired more than now
+      await supabase.from('notifications')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('user_id', auth.user.id)
+        .lt('expires_at', new Date().toISOString())
+        .is('deleted_at', null);
+
       const { data, error } = await supabase
         .from('notifications').select('*').eq('user_id', auth.user.id)
         .is('deleted_at', null).order('created_at', { ascending: false });

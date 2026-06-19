@@ -18,9 +18,49 @@ export interface AvailabilityResponse {
   day_statuses: DayAvailability[];
 }
 
+export type JoinStatus = 'host' | 'none' | 'pending' | 'approved' | 'rejected';
+
+export interface JoinedBooking extends Booking {
+  joined_at: string;
+}
+
+export interface PendingJoinBooking extends Booking {
+  join_status: 'pending';
+  joined_at: string;
+}
+
+export interface PublicBooking extends Booking {
+  is_mine: boolean;
+  join_status: JoinStatus;
+}
+
+export interface JoinRequest {
+  booking_id: string;
+  user_id: string;
+  requested_at: string;
+  requester: { id: string; name: string; phone_number: string };
+  booking: { id: string; start_time: string; end_time: string; turf_id: string };
+}
+
 export const bookingsApi = {
   getBookings: async (): Promise<Booking[]> => {
     const response = await apiClient.get('/bookings');
+    return response.data;
+  },
+  getJoinedGames: async (): Promise<JoinedBooking[]> => {
+    const response = await apiClient.get('/bookings/joined');
+    return response.data;
+  },
+  getPendingJoins: async (): Promise<PendingJoinBooking[]> => {
+    const response = await apiClient.get('/bookings/pending-joins');
+    return response.data;
+  },
+  getPublicGames: async (): Promise<PublicBooking[]> => {
+    const response = await apiClient.get('/bookings/public');
+    return response.data;
+  },
+  getJoinRequests: async (): Promise<JoinRequest[]> => {
+    const response = await apiClient.get('/bookings/join-requests');
     return response.data;
   },
   createBooking: async (payload: BookingCreatePayload): Promise<Booking> => {
@@ -36,6 +76,15 @@ export const bookingsApi = {
   },
   joinBooking: async (bookingId: string): Promise<void> => {
     await apiClient.post(`/bookings/${bookingId}/join`);
+  },
+  leaveBooking: async (bookingId: string): Promise<void> => {
+    await apiClient.delete(`/bookings/${bookingId}/join`);
+  },
+  approveJoinRequest: async (bookingId: string, userId: string): Promise<void> => {
+    await apiClient.put(`/bookings/${bookingId}/join-requests/approve`, { user_id: userId });
+  },
+  rejectJoinRequest: async (bookingId: string, userId: string): Promise<void> => {
+    await apiClient.put(`/bookings/${bookingId}/join-requests/reject`, { user_id: userId });
   },
   getAvailability: async (
     turfId: string,
