@@ -77,6 +77,11 @@ export interface ManualBooking {
   booking_date: string;
   start_time: string;
   end_time: string;
+  // Combined view extras
+  start_time_iso?: string;
+  end_time_iso?: string;
+  booking_type?: 'manual' | 'online';
+  status?: string;
   customer_name: string;
   customer_phone: string | null;
   total_amount: number;
@@ -84,6 +89,43 @@ export interface ManualBooking {
   notes: string | null;
   created_at: string;
   court?: { name: string };
+  advance_amount?: number | null;
+  remaining_balance?: number | null;
+}
+
+export interface ReportSummary {
+  total_bookings: number;
+  confirmed_bookings: number;
+  total_revenue: number;
+  online_revenue: number;
+  cash_revenue: number;
+  pending_amount: number;
+  commission_amount: number;
+}
+
+export interface ReportBooking {
+  id: string;
+  turf_id: string;
+  turf_name: string;
+  court_name: string;
+  booking_type: 'online' | 'manual';
+  start_time: string;
+  end_time: string;
+  customer_name: string;
+  customer_phone: string | null;
+  amount: number;
+  payment_status: string;
+  status: string;
+  advance_amount: number | null;
+  remaining_balance: number | null;
+  commission_amount: number;
+  created_at: string;
+}
+
+export interface ReportResponse {
+  summary: ReportSummary;
+  bookings: ReportBooking[];
+  turfs: { id: string; name: string }[];
 }
 
 export const adminTurfs = {
@@ -141,9 +183,10 @@ export const adminTurfs = {
   saveSettings: async (turfId: string, payload: Partial<TurfSettings>): Promise<void> => {
     await api.put(`/admin-turfs/${turfId}/settings`, payload);
   },
-  // Manual bookings
-  listBookings: async (turfId: string): Promise<ManualBooking[]> => {
-    const { data } = await api.get(`/admin-turfs/${turfId}/bookings`);
+  // Manual bookings (pass includeOnline=true to get combined view)
+  listBookings: async (turfId: string, includeOnline = false): Promise<ManualBooking[]> => {
+    const params = includeOnline ? '?include_online=true' : '';
+    const { data } = await api.get(`/admin-turfs/${turfId}/bookings${params}`);
     return data.bookings;
   },
   createBooking: async (turfId: string, payload: Omit<ManualBooking, 'id' | 'turf_id' | 'created_at' | 'court'>): Promise<ManualBooking> => {
@@ -162,5 +205,16 @@ export const adminTurfs = {
     if (courtId) params.set('court_id', courtId);
     const { data } = await api.get(`/admin-turfs/${turfId}/bookings/availability?${params}`);
     return data.booked_slots ?? [];
+  },
+  // Reports
+  getReport: async (params: {
+    start: string;
+    end: string;
+    turf_id?: string;
+  }): Promise<ReportResponse> => {
+    const qs = new URLSearchParams({ start: params.start, end: params.end });
+    if (params.turf_id) qs.set('turf_id', params.turf_id);
+    const { data } = await api.get(`/admin-turfs/reports?${qs}`);
+    return data;
   },
 };

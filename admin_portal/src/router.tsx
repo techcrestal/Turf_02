@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import TurfListPage from './pages/TurfListPage';
 import TurfDetailPage from './pages/TurfDetailPage';
 import UsersPage from './pages/UsersPage';
+import ReportsPage from './pages/ReportsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAdminAuth();
@@ -35,6 +36,7 @@ export default function AppRouter() {
           <Route index element={<Navigate to="/turfs" replace />} />
           <Route path="turfs" element={<TurfListPage />} />
           <Route path="turfs/:id/*" element={<TurfDetailPage />} />
+          <Route path="reports" element={<ReportsPage />} />
           <Route
             path="users"
             element={

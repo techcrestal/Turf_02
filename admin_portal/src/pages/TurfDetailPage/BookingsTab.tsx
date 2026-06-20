@@ -191,7 +191,7 @@ export default function BookingsTab({ turfId }: Props) {
 
   const { data: bookings = [], isLoading } = useQuery({
     queryKey: ['admin-bookings', turfId],
-    queryFn: () => adminTurfs.listBookings(turfId),
+    queryFn: () => adminTurfs.listBookings(turfId, true), // include online bookings
   });
 
   const { data: courts = [] } = useQuery({
@@ -306,7 +306,7 @@ export default function BookingsTab({ turfId }: Props) {
   return (
     <div className="max-w-3xl">
       <div className="flex items-center justify-between mb-5">
-        <h2 className="font-semibold text-slate-700">Manual Bookings (Cash)</h2>
+        <h2 className="font-semibold text-slate-700">All Bookings</h2>
         {!showAdd && (
           <button
             onClick={() => setShowAdd(true)}
@@ -483,45 +483,80 @@ export default function BookingsTab({ turfId }: Props) {
           No manual bookings yet.
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 font-medium text-left">
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Time</th>
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Court</th>
+                <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Amount</th>
+                <th className="px-4 py-3">Payment</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              {bookings.map((b: ManualBooking) => (
-                <tr key={b.id} className="border-b border-slate-50 hover:bg-slate-50/50">
-                  <td className="px-4 py-3 text-slate-700">{b.booking_date}</td>
-                  <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{b.start_time.slice(0,5)} – {b.end_time.slice(0,5)}</td>
-                  <td className="px-4 py-3">
-                    <p className="text-slate-700 font-medium">{b.customer_name}</p>
-                    {b.customer_phone && <p className="text-slate-400 text-xs">{b.customer_phone}</p>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">{b.court?.name ?? '—'}</td>
-                  <td className="px-4 py-3 text-slate-700 font-medium">₹{b.total_amount}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${statusBadge(b.payment_status)}`}>
-                      {b.payment_status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => { if (confirm('Delete this booking?')) deleteMutation.mutate(b.id); }}
-                      className="text-red-400 hover:text-red-600 text-xs"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {bookings.map((b: ManualBooking) => {
+                const isOnline = b.booking_type === 'online';
+                // Display date/time — for online use the iso timestamp, for manual use date+time fields
+                let displayDate = b.booking_date ?? '';
+                let displayTime = '';
+                if (isOnline && b.start_time_iso) {
+                  const d = new Date(b.start_time_iso);
+                  displayDate = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                  displayTime = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+                } else {
+                  displayTime = `${String(b.start_time).slice(0,5)} – ${String(b.end_time).slice(0,5)}`;
+                }
+                return (
+                  <tr key={b.id} className={`border-b border-slate-50 hover:bg-slate-50/50 ${b.status === 'cancelled' ? 'opacity-50' : ''}`}>
+                    <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{displayDate}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">{displayTime}</td>
+                    <td className="px-4 py-3">
+                      <p className="text-slate-700 font-medium">{b.customer_name}</p>
+                      {b.customer_phone && <p className="text-slate-400 text-xs">{b.customer_phone}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{b.court?.name ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        isOnline ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {isOnline ? 'Online' : 'Cash'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700 font-medium">₹{b.total_amount}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${statusBadge(b.payment_status)}`}>
+                        {b.payment_status === 'completed' ? 'paid' : b.payment_status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {b.status ? (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+                          b.status === 'cancelled' ? 'bg-red-100 text-red-600' :
+                          b.status === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                          'bg-slate-100 text-slate-500'
+                        }`}>{b.status}</span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">confirmed</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {!isOnline && (
+                        <button
+                          onClick={() => { if (confirm('Delete this booking?')) deleteMutation.mutate(b.id); }}
+                          className="text-red-400 hover:text-red-600 text-xs"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

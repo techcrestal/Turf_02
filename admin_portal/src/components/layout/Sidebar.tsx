@@ -3,6 +3,7 @@ import { useAdminAuth } from '../../context/AdminAuthContext';
 
 const navItems = [
   { to: '/turfs', label: 'Turfs', icon: '🏟️' },
+  { to: '/reports', label: 'Reports', icon: '📊' },
   { to: '/users', label: 'Portal Users', icon: '👥', adminOnly: true },
 ];
 

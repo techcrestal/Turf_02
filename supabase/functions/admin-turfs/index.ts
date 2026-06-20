@@ -38,6 +38,109 @@ Deno.serve(async (req) => {
 
   const supabase = getSupabase();
 
+  // ── GET /reports — aggregate bookings across turfs ───────────────────────────
+  if (req.method === 'GET' && segs[0] === 'reports') {
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = today.slice(0, 7) + '-01';
+    const start = url.searchParams.get('start') ?? monthStart;
+    const end = url.searchParams.get('end') ?? today;
+    const filterTurfId = url.searchParams.get('turf_id');
+
+    // Turf owners only see their own turf
+    const effectiveTurfId = user.role === 'turf_owner' ? user.turf_id : (filterTurfId || null);
+
+    // Online bookings (TIMESTAMPTZ — use UTC day boundaries)
+    let oq = supabase
+      .from('bookings')
+      .select('id, turf_id, court_id, start_time, end_time, price, status, payment_status, advance_amount, remaining_balance, created_at, court:courts(name), turf:turfs(name), usr:users(name, phone_number)')
+      .is('deleted_at', null)
+      .gte('start_time', start + 'T00:00:00.000Z')
+      .lte('start_time', end + 'T23:59:59.999Z')
+      .order('start_time', { ascending: false });
+    if (effectiveTurfId) oq = oq.eq('turf_id', effectiveTurfId);
+    const { data: onlineRaw } = await oq;
+
+    // Manual (cash) bookings (DATE column, no timezone)
+    let mq = supabase
+      .from('manual_bookings')
+      .select('id, turf_id, court_id, booking_date, start_time, end_time, customer_name, customer_phone, total_amount, payment_status, notes, created_at, court:courts(name), turf:turfs(name)')
+      .gte('booking_date', start)
+      .lte('booking_date', end)
+      .order('booking_date', { ascending: false })
+      .order('start_time', { ascending: false });
+    if (effectiveTurfId) mq = mq.eq('turf_id', effectiveTurfId);
+    const { data: manualRaw } = await mq;
+
+    // Commission per turf (admin only)
+    const commissionMap: Record<string, number> = {};
+    if (user.role === 'administrator') {
+      const { data: settings } = await supabase
+        .from('turf_settings').select('turf_id, commission_percentage');
+      for (const s of settings ?? []) commissionMap[s.turf_id] = Number(s.commission_percentage ?? 0);
+    }
+
+    // Normalize to unified shape
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const online = (onlineRaw ?? []).map((b: any) => ({
+      id: b.id, turf_id: b.turf_id, turf_name: b.turf?.name ?? '—',
+      court_name: b.court?.name ?? '—', booking_type: 'online' as const,
+      start_time: b.start_time, end_time: b.end_time,
+      customer_name: b.usr?.name ?? 'Online User', customer_phone: b.usr?.phone_number ?? null,
+      amount: Number(b.price), payment_status: b.payment_status, status: b.status,
+      advance_amount: b.advance_amount ? Number(b.advance_amount) : null,
+      remaining_balance: b.remaining_balance ? Number(b.remaining_balance) : null,
+      commission_amount: commissionMap[b.turf_id] ? Math.round(Number(b.price) * commissionMap[b.turf_id]) / 100 : 0,
+      created_at: b.created_at,
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const manual = (manualRaw ?? []).map((b: any) => ({
+      id: b.id, turf_id: b.turf_id, turf_name: b.turf?.name ?? '—',
+      court_name: b.court?.name ?? '—', booking_type: 'manual' as const,
+      start_time: `${b.booking_date}T${b.start_time}`,
+      end_time: `${b.booking_date}T${b.end_time}`,
+      customer_name: b.customer_name, customer_phone: b.customer_phone,
+      amount: Number(b.total_amount), payment_status: b.payment_status, status: 'confirmed',
+      advance_amount: null, remaining_balance: null,
+      commission_amount: commissionMap[b.turf_id] ? Math.round(Number(b.total_amount) * commissionMap[b.turf_id]) / 100 : 0,
+      created_at: b.created_at,
+    }));
+
+    // Merge: group by date prefix for correct cross-type ordering
+    const all = [...online, ...manual].sort((a, b) => {
+      const ad = a.start_time.slice(0, 10); const bd = b.start_time.slice(0, 10);
+      if (ad !== bd) return bd.localeCompare(ad);
+      return b.start_time.slice(11, 16).localeCompare(a.start_time.slice(11, 16));
+    });
+
+    // Summary stats (exclude cancelled)
+    const active = all.filter(b => b.status !== 'cancelled');
+    const totalRevenue = active.reduce((s, b) => s + b.amount, 0);
+    const pendingAmount = active.filter(b => b.payment_status === 'pending').reduce((s, b) => s + b.amount, 0);
+    const partialBalance = active.filter(b => b.payment_status === 'partial').reduce((s, b) => s + (b.remaining_balance ?? 0), 0);
+
+    // Turf list for admin filter dropdown
+    let turfList: { id: string; name: string }[] = [];
+    if (user.role === 'administrator') {
+      const { data } = await supabase.from('turfs').select('id, name').order('name');
+      turfList = data ?? [];
+    }
+
+    return ok({
+      bookings: all,
+      turfs: turfList,
+      summary: {
+        total_bookings: all.length,
+        confirmed_bookings: active.length,
+        total_revenue: Math.round(totalRevenue * 100) / 100,
+        online_revenue: Math.round(active.filter(b => b.booking_type === 'online').reduce((s, b) => s + b.amount, 0) * 100) / 100,
+        cash_revenue: Math.round(active.filter(b => b.booking_type === 'manual').reduce((s, b) => s + b.amount, 0) * 100) / 100,
+        pending_amount: Math.round((pendingAmount + partialBalance) * 100) / 100,
+        commission_amount: Math.round(active.reduce((s, b) => s + b.commission_amount, 0) * 100) / 100,
+      },
+    });
+  }
+
   // ── GET / → list turfs ──────────────────────────────────────────────────────
   if (req.method === 'GET' && segs.length === 0) {
     let query = supabase
@@ -272,16 +375,68 @@ Deno.serve(async (req) => {
     return ok({ booked_slots: bookedSlots });
   }
 
-  // GET /:id/bookings
+  // GET /:id/bookings  (add ?include_online=true to combine with online bookings)
   if (req.method === 'GET' && resource === 'bookings' && !resourceId) {
-    const { data, error } = await supabase
+    const includeOnline = url.searchParams.get('include_online') === 'true';
+
+    const { data: manualData, error } = await supabase
       .from('manual_bookings')
       .select(`*, court:courts(name)`)
       .eq('turf_id', turfId)
       .order('booking_date', { ascending: false })
       .order('start_time', { ascending: false });
     if (error) return err(error.message);
-    return ok({ bookings: data ?? [] });
+
+    const manualBookings = (manualData ?? []).map((b: any) => ({
+      ...b,
+      booking_type: 'manual',
+      // Normalise to a single start_time string for the combined table
+      start_time_iso: `${b.booking_date}T${b.start_time}`,
+      end_time_iso: `${b.booking_date}T${b.end_time}`,
+      total_amount: Number(b.total_amount),
+    }));
+
+    if (!includeOnline) return ok({ bookings: manualBookings });
+
+    const { data: onlineData } = await supabase
+      .from('bookings')
+      .select('id, turf_id, court_id, start_time, end_time, price, status, payment_status, advance_amount, remaining_balance, created_at, court:courts(name), usr:users(name, phone_number)')
+      .eq('turf_id', turfId)
+      .is('deleted_at', null)
+      .order('start_time', { ascending: false });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onlineBookings = (onlineData ?? []).map((b: any) => ({
+      id: b.id, turf_id: b.turf_id, court_id: b.court_id,
+      booking_type: 'online',
+      booking_date: b.start_time.slice(0, 10),
+      start_time: b.start_time.slice(11, 16),  // "HH:MM" for display
+      end_time: b.end_time.slice(11, 16),
+      start_time_iso: b.start_time,
+      end_time_iso: b.end_time,
+      customer_name: b.usr?.name ?? 'Online User',
+      customer_phone: b.usr?.phone_number ?? null,
+      total_amount: Number(b.price),
+      payment_status: b.payment_status,
+      status: b.status,
+      notes: null,
+      court: b.court,
+      advance_amount: b.advance_amount ? Number(b.advance_amount) : null,
+      remaining_balance: b.remaining_balance ? Number(b.remaining_balance) : null,
+      created_at: b.created_at,
+    }));
+
+    // Sort combined list newest first by date then time
+    const all = [...manualBookings, ...onlineBookings].sort((a: any, b: any) => {
+      const ad = a.booking_type === 'manual' ? a.booking_date : a.start_time_iso.slice(0, 10);
+      const bd = b.booking_type === 'manual' ? b.booking_date : b.start_time_iso.slice(0, 10);
+      if (ad !== bd) return bd.localeCompare(ad);
+      const at = a.booking_type === 'manual' ? a.start_time : a.start_time_iso.slice(11, 16);
+      const bt = b.booking_type === 'manual' ? b.start_time : b.start_time_iso.slice(11, 16);
+      return bt.localeCompare(at);
+    });
+
+    return ok({ bookings: all });
   }
 
   // POST /:id/bookings
